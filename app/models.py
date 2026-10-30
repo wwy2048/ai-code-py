@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import BigInteger, DateTime, Integer, SmallInteger, String, func, text
+from sqlalchemy import BigInteger, DateTime, Integer, SmallInteger, String, Text, func, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db import Base
@@ -27,6 +27,59 @@ class User(Base):
     edit_time: Mapped[datetime] = mapped_column(
         'editTime', DateTime, nullable=False, server_default=func.now()
     )
+    create_time: Mapped[datetime] = mapped_column(
+        'createTime', DateTime, nullable=False, server_default=func.now()
+    )
+    update_time: Mapped[datetime] = mapped_column(
+        'updateTime', DateTime, nullable=False, server_default=func.now()
+    )
+    is_delete: Mapped[int] = mapped_column(
+        'isDelete', SmallInteger, nullable=False, server_default=text('0')
+    )
+
+
+class App(Base):
+    """兼容现有 MySQL app 表的应用模型。"""
+
+    __tablename__ = 'app'
+
+    id: Mapped[int] = mapped_column(
+        BigInteger().with_variant(Integer, 'sqlite'), primary_key=True, autoincrement=True
+    )
+    app_name: Mapped[str | None] = mapped_column('appName', String(256))
+    cover: Mapped[str | None] = mapped_column('cover', String(512))
+    init_prompt: Mapped[str | None] = mapped_column('initPrompt', Text)
+    code_gen_type: Mapped[str | None] = mapped_column('codeGenType', String(64))
+    deploy_key: Mapped[str | None] = mapped_column('deployKey', String(64), unique=True)
+    deployed_time: Mapped[datetime | None] = mapped_column('deployedTime', DateTime)
+    priority: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text('0'))
+    user_id: Mapped[int] = mapped_column('userId', BigInteger, nullable=False)
+    edit_time: Mapped[datetime] = mapped_column(
+        'editTime', DateTime, nullable=False, server_default=func.now()
+    )
+    create_time: Mapped[datetime] = mapped_column(
+        'createTime', DateTime, nullable=False, server_default=func.now()
+    )
+    update_time: Mapped[datetime] = mapped_column(
+        'updateTime', DateTime, nullable=False, server_default=func.now()
+    )
+    is_delete: Mapped[int] = mapped_column(
+        'isDelete', SmallInteger, nullable=False, server_default=text('0')
+    )
+
+
+class ChatHistory(Base):
+    """兼容现有 MySQL chat_history 表的基础模型。"""
+
+    __tablename__ = 'chat_history'
+
+    id: Mapped[int] = mapped_column(
+        BigInteger().with_variant(Integer, 'sqlite'), primary_key=True, autoincrement=True
+    )
+    message: Mapped[str] = mapped_column(Text, nullable=False)
+    message_type: Mapped[str] = mapped_column('messageType', String(32), nullable=False)
+    app_id: Mapped[int] = mapped_column('appId', BigInteger, nullable=False)
+    user_id: Mapped[int] = mapped_column('userId', BigInteger, nullable=False)
     create_time: Mapped[datetime] = mapped_column(
         'createTime', DateTime, nullable=False, server_default=func.now()
     )

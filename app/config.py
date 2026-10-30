@@ -21,6 +21,20 @@ class Settings(BaseSettings):
     password_hash_time_cost: int = 3
     password_hash_parallelism: int = 4
 
+    anthropic_api_key: str | None = None
+    anthropic_base_url: str = 'https://api.deepseek.com/anthropic'
+    anthropic_model: str = 'deepseek-flash'
+    anthropic_timeout_seconds: float = 30.0
+
+    workspace_root: str = 'tmp/codeOutput'
+    deploy_root: str = 'tmp/code_deploy'
+    screenshots_root: str = 'tmp/screenshots'
+
+    cos_secret_id: str | None = None
+    cos_secret_key: str | None = None
+    cos_region: str | None = None
+    cos_bucket: str | None = None
+
 
 @lru_cache
 def get_settings() -> Settings:

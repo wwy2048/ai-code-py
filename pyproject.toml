@@ -7,7 +7,9 @@ requires-python = ">=3.12"
 dependencies = [
     "aiomysql>=0.2.0,<1",
     "alembic>=1.14,<2",
+    "anthropic>=0.70,<1",
     "argon2-cffi>=23.1,<26",
+    "cos-python-sdk-v5>=1.9,<2",
     "fastapi>=0.115,<1",
     "pydantic-settings>=2.7,<3",
     "redis>=5.2,<7",
@@ -33,6 +35,10 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["app"]
+
+[[tool.uv.index]]
+url = "https://mirrors.aliyun.com/pypi/simple"
+default = true
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
