@@ -18,21 +18,21 @@ from app.schemas import AppCreateRequest, AppQueryRequest, AppUpdateRequest, App
 logger = logging.getLogger(__name__)
 
 _SORT_COLUMNS = {
-    'appName': App.app_name,
-    'createTime': App.create_time,
-    'updateTime': App.update_time,
-    'priority': App.priority,
+    "appName": App.app_name,
+    "createTime": App.create_time,
+    "updateTime": App.update_time,
+    "priority": App.priority,
 }
 
 
 async def require_owned_app(session: AsyncSession, app_id: int, user_id: int) -> App:
     if app_id <= 0:
-        raise BusinessError(ErrorCode.PARAMS_ERROR, '应用ID不能为空')
+        raise BusinessError(ErrorCode.PARAMS_ERROR, "应用ID不能为空")
     app = await session.scalar(select(App).where(App.id == app_id, App.is_delete == 0))
     if app is None:
-        raise BusinessError(ErrorCode.NOT_FOUND, '应用不存在')
+        raise BusinessError(ErrorCode.NOT_FOUND, "应用不存在")
     if app.user_id != user_id:
-        raise BusinessError(ErrorCode.NO_AUTH, '无权限操作该应用')
+        raise BusinessError(ErrorCode.NO_AUTH, "无权限操作该应用")
     return app
 
 
@@ -45,7 +45,7 @@ async def _user_map(session: AsyncSession, user_ids: set[int]) -> dict[int, User
 
 async def to_app_vo(session: AsyncSession, app: App) -> AppVO:
     users = await _user_map(session, {app.user_id})
-    return AppVO.model_validate(app).model_copy(update={'user': users.get(app.user_id)})
+    return AppVO.model_validate(app).model_copy(update={"user": users.get(app.user_id)})
 
 
 async def create_app(
@@ -55,7 +55,7 @@ async def create_app(
     router: CodeGenTypeRouter,
 ) -> int:
     if not payload.init_prompt.strip():
-        raise BusinessError(ErrorCode.PARAMS_ERROR, '初始化 prompt 不能为空')
+        raise BusinessError(ErrorCode.PARAMS_ERROR, "初始化 prompt 不能为空")
     code_gen_type = await router.route(payload.init_prompt)
     app = App(
         app_name=payload.app_name,
@@ -82,7 +82,7 @@ async def update_app(
     payload: AppUpdateRequest,
 ) -> None:
     if not payload.app_name.strip():
-        raise BusinessError(ErrorCode.PARAMS_ERROR, '应用名称不能为空')
+        raise BusinessError(ErrorCode.PARAMS_ERROR, "应用名称不能为空")
     app = await require_owned_app(session, payload.id, user_id)
     app.app_name = payload.app_name.strip()
     app.edit_time = datetime.now()
@@ -91,7 +91,7 @@ async def update_app(
 
 def _validated_page(query: AppQueryRequest) -> None:
     if query.page_num < 1 or query.page_size < 1 or query.page_size > 20:
-        raise BusinessError(ErrorCode.PARAMS_ERROR, '分页参数错误，每页最多查询 20 个应用')
+        raise BusinessError(ErrorCode.PARAMS_ERROR, "分页参数错误，每页最多查询 20 个应用")
 
 
 def _apply_filters(
@@ -104,9 +104,9 @@ def _apply_filters(
     if query.id is not None:
         conditions.append(App.id == query.id)
     if query.app_name:
-        conditions.append(App.app_name.like(f'%{query.app_name}%'))
+        conditions.append(App.app_name.like(f"%{query.app_name}%"))
     if query.init_prompt:
-        conditions.append(App.init_prompt.like(f'%{query.init_prompt}%'))
+        conditions.append(App.init_prompt.like(f"%{query.init_prompt}%"))
     if query.code_gen_type:
         conditions.append(App.code_gen_type == query.code_gen_type)
     if include_user_filter and query.user_id is not None:
@@ -118,8 +118,8 @@ def _apply_filters(
 
 
 def _order_by(query: AppQueryRequest) -> ColumnElement[Any]:
-    column = _SORT_COLUMNS.get(query.sort_field or '', App.update_time)
-    return column.asc() if query.sort_order == 'ascend' else column.desc()
+    column = _SORT_COLUMNS.get(query.sort_field or "", App.update_time)
+    return column.asc() if query.sort_order == "ascend" else column.desc()
 
 
 async def list_apps(
@@ -155,17 +155,17 @@ async def list_apps(
     users = await _user_map(session, {app.user_id for app in apps})
     records = [
         AppVO.model_validate(app)
-        .model_copy(update={'user': users.get(app.user_id)})
-        .model_dump(mode='json', by_alias=True)
+        .model_copy(update={"user": users.get(app.user_id)})
+        .model_dump(mode="json", by_alias=True)
         for app in apps
     ]
     return {
-        'records': records,
-        'pageNumber': query.page_num,
-        'pageSize': query.page_size,
-        'totalPage': ceil(total / query.page_size) if total else 0,
-        'totalRow': total,
-        'optimizeCountQuery': False,
+        "records": records,
+        "pageNumber": query.page_num,
+        "pageSize": query.page_size,
+        "totalPage": ceil(total / query.page_size) if total else 0,
+        "totalRow": total,
+        "optimizeCountQuery": False,
     }
 
 
@@ -183,4 +183,4 @@ async def delete_app(
     try:
         await asyncio.to_thread(cleaner.delete_app_artifacts, app)
     except Exception:
-        logger.exception('应用 %s 删除后清理本地产物失败', app_id)
+        logger.exception("应用 %s 删除后清理本地产物失败", app_id)

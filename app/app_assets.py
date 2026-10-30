@@ -9,7 +9,7 @@ from app.models import App
 
 logger = logging.getLogger(__name__)
 
-_CODEGEN_TYPES = ('html', 'multi_file', 'vue_project')
+_CODEGEN_TYPES = ("html", "multi_file", "vue_project")
 
 
 class CoverCleaner(Protocol):
@@ -44,11 +44,11 @@ class CosCoverCleaner:
 
     def delete_cover(self, cover_url: str) -> None:
         if not self._client or not self._bucket:
-            logger.warning('COS 未配置，跳过封面清理: %s', cover_url)
+            logger.warning("COS 未配置，跳过封面清理: %s", cover_url)
             return
-        key = urlparse(cover_url).path.lstrip('/')
+        key = urlparse(cover_url).path.lstrip("/")
         if not key:
-            logger.warning('无法从封面 URL 提取对象键: %s', cover_url)
+            logger.warning("无法从封面 URL 提取对象键: %s", cover_url)
             return
         self._client.delete_object(Bucket=self._bucket, Key=key)
 
@@ -79,7 +79,7 @@ class LocalAppAssetCleaner:
 
     def delete_app_artifacts(self, app: App) -> None:
         for code_gen_type in _CODEGEN_TYPES:
-            workspace = self._workspace_root / f'{code_gen_type}_{app.id}'
+            workspace = self._workspace_root / f"{code_gen_type}_{app.id}"
             if self._within(self._workspace_root, workspace):
                 self._remove(workspace)
 
@@ -88,18 +88,18 @@ class LocalAppAssetCleaner:
             if self._within(self._deploy_root, deployment):
                 self._remove(deployment)
             else:
-                logger.warning('拒绝清理部署根目录之外的路径: %s', app.deploy_key)
+                logger.warning("拒绝清理部署根目录之外的路径: %s", app.deploy_key)
 
         cover = app.cover
         if not cover:
             return
-        if '://' not in cover:
+        if "://" not in cover:
             cover_path = Path(cover)
             if not cover_path.is_absolute():
                 cover_path = self._screenshots_root / cover_path
             if self._within(self._screenshots_root, cover_path):
                 self._remove(cover_path.resolve())
                 return
-            logger.warning('拒绝清理截图根目录之外的封面: %s', cover)
+            logger.warning("拒绝清理截图根目录之外的封面: %s", cover)
             return
         self._cover_cleaner.delete_cover(cover)

@@ -11,19 +11,19 @@ from app.services.apps import require_owned_app
 
 def serialize_chat_history(record: ChatHistory) -> dict:
     return {
-        'id': record.id,
-        'message': record.message,
-        'messageType': record.message_type,
-        'appId': record.app_id,
-        'userId': record.user_id,
-        'createTime': record.create_time.isoformat(),
-        'updateTime': record.update_time.isoformat(),
-        'isDelete': record.is_delete,
-        'turnId': record.turn_id,
-        'sequence': record.sequence,
-        'messageKind': record.message_kind,
-        'visible': record.visible,
-        'active': record.active,
+        "id": record.id,
+        "message": record.message,
+        "messageType": record.message_type,
+        "appId": record.app_id,
+        "userId": record.user_id,
+        "createTime": record.create_time.isoformat(),
+        "updateTime": record.update_time.isoformat(),
+        "isDelete": record.is_delete,
+        "turnId": record.turn_id,
+        "sequence": record.sequence,
+        "messageKind": record.message_kind,
+        "visible": record.visible,
+        "active": record.active,
     }
 
 
@@ -37,7 +37,7 @@ async def list_visible_history(
 ) -> dict:
     await require_owned_app(session, app_id, user_id)
     if page_size < 1 or page_size > 20:
-        raise BusinessError(ErrorCode.PARAMS_ERROR, 'pageSize 必须在 1 到 20 之间')
+        raise BusinessError(ErrorCode.PARAMS_ERROR, "pageSize 必须在 1 到 20 之间")
 
     conditions = [
         ChatHistory.app_id == app_id,
@@ -56,10 +56,10 @@ async def list_visible_history(
         )
     ).all()
     return {
-        'records': [serialize_chat_history(record) for record in records],
-        'pageNumber': 1,
-        'pageSize': page_size,
-        'totalPage': (total + page_size - 1) // page_size if total else 0,
-        'totalRow': total,
-        'optimizeCountQuery': False,
+        "records": [serialize_chat_history(record) for record in records],
+        "pageNumber": 1,
+        "pageSize": page_size,
+        "totalPage": (total + page_size - 1) // page_size if total else 0,
+        "totalRow": total,
+        "optimizeCountQuery": False,
     }

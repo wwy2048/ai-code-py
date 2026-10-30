@@ -45,9 +45,9 @@ async def app_context(tmp_path: Path) -> AsyncIterator[AppContext]:
         password_hash_memory_cost=1024,
         password_hash_time_cost=1,
         password_hash_parallelism=1,
-        workspace_root=str(tmp_path / 'codeOutput'),
-        deploy_root=str(tmp_path / 'code_deploy'),
-        screenshots_root=str(tmp_path / 'screenshots'),
+        workspace_root=str(tmp_path / "codeOutput"),
+        deploy_root=str(tmp_path / "code_deploy"),
+        screenshots_root=str(tmp_path / "screenshots"),
         _env_file=None,  # type: ignore[call-arg]
     )
     await asyncio.to_thread(Path(settings.workspace_root).mkdir, parents=True, exist_ok=True)

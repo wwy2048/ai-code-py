@@ -40,12 +40,12 @@ async def get_current_user(
     session_id = request.cookies.get(settings.session_cookie_name)
     user_id = await session_store.get_user_id(session_id)
     if user_id is None:
-        raise BusinessError(ErrorCode.NOT_LOGIN, '未登录')
+        raise BusinessError(ErrorCode.NOT_LOGIN, "未登录")
 
     user = await session.scalar(select(User).where(User.id == user_id, User.is_delete == 0))
     if user is None:
         await session_store.delete(session_id)
-        raise BusinessError(ErrorCode.NOT_LOGIN, '未登录')
+        raise BusinessError(ErrorCode.NOT_LOGIN, "未登录")
     return user
 
 

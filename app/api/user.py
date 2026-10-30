@@ -6,10 +6,10 @@ from app.schemas import UserLoginRequest, UserRegisterRequest
 from app.services.users import login_user, register_user, to_login_user_vo
 from app.session_cookie import clear_session_cookie, read_session_id, set_session_cookie
 
-router = APIRouter(prefix='/user', tags=['user'])
+router = APIRouter(prefix="/user", tags=["user"])
 
 
-@router.post('/register')
+@router.post("/register")
 async def user_register(
     payload: UserRegisterRequest,
     session: DbSession,
@@ -19,7 +19,7 @@ async def user_register(
     return success(user_id)
 
 
-@router.post('/login')
+@router.post("/login")
 async def user_login(
     payload: UserLoginRequest,
     request: Request,
@@ -36,12 +36,12 @@ async def user_login(
     return success(to_login_user_vo(user).model_dump(by_alias=True))
 
 
-@router.get('/get/login')
+@router.get("/get/login")
 async def get_login_user(current_user: CurrentUser) -> dict:
     return success(to_login_user_vo(current_user).model_dump(by_alias=True))
 
 
-@router.post('/logout')
+@router.post("/logout")
 async def user_logout(
     request: Request,
     response: Response,

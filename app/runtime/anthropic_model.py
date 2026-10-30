@@ -23,7 +23,7 @@ class AnthropicCodeModel:
 
     def __init__(self, settings: Settings, client: Any | None = None) -> None:
         if not settings.anthropic_api_key and client is None:
-            raise RuntimeError('未配置 ANTHROPIC_API_KEY')
+            raise RuntimeError("未配置 ANTHROPIC_API_KEY")
         self._client = client or AsyncAnthropic(
             api_key=settings.anthropic_api_key,
             base_url=settings.anthropic_base_url,
@@ -34,8 +34,8 @@ class AnthropicCodeModel:
         self._max_retries = settings.model_max_retries
         self._retry_base_seconds = settings.model_retry_base_seconds
         self._system_prompt = (
-            Path(__file__).parent.parent / 'prompts' / self.prompt_file
-        ).read_text(encoding='utf-8')
+            Path(__file__).parent.parent / "prompts" / self.prompt_file
+        ).read_text(encoding="utf-8")
 
     @property
     def model_name(self) -> str:
@@ -67,7 +67,7 @@ class AnthropicCodeModel:
                 if emitted or not retryable or attempt + 1 >= self._max_retries:
                     raise ModelCallError(self._error_category(exc), attempt) from exc
                 await asyncio.sleep(self._retry_base_seconds * (2**attempt))
-        raise RuntimeError('模型调用次数耗尽')
+        raise RuntimeError("模型调用次数耗尽")
 
     @staticmethod
     def _is_retryable(exc: Exception) -> bool:
@@ -90,40 +90,40 @@ class AnthropicCodeModel:
     @staticmethod
     def _error_category(exc: Exception) -> str:
         if isinstance(exc, (TimeoutError, APITimeoutError)):
-            return 'timeout'
+            return "timeout"
         if isinstance(exc, (ConnectionError, APIConnectionError)):
-            return 'connection'
+            return "connection"
         if isinstance(exc, RateLimitError):
-            return 'rate_limit'
+            return "rate_limit"
         if isinstance(exc, InternalServerError):
-            return 'server_error'
+            return "server_error"
         if isinstance(exc, APIStatusError):
-            return f'http_{exc.status_code}'
+            return f"http_{exc.status_code}"
         return type(exc).__name__
 
     def _model_reply(self, final: Any, *, retry_count: int) -> ModelReply:
         text_parts: list[str] = []
         tool_calls: list[ToolCall] = []
         for block in final.content:
-            block_type = getattr(block, 'type', None)
-            if block_type == 'text':
-                text_parts.append(str(getattr(block, 'text', '')))
-            elif block_type == 'tool_use':
-                arguments = getattr(block, 'input', {})
+            block_type = getattr(block, "type", None)
+            if block_type == "text":
+                text_parts.append(str(getattr(block, "text", "")))
+            elif block_type == "tool_use":
+                arguments = getattr(block, "input", {})
                 if isinstance(arguments, dict):
                     tool_calls.append(
                         ToolCall(
-                            id=str(getattr(block, 'id', '')),
-                            name=str(getattr(block, 'name', '')),
+                            id=str(getattr(block, "id", "")),
+                            name=str(getattr(block, "name", "")),
                             arguments=arguments,
                         )
                     )
-        usage = getattr(final, 'usage', None)
+        usage = getattr(final, "usage", None)
         return ModelReply(
-            text=''.join(text_parts),
+            text="".join(text_parts),
             tool_calls=tool_calls,
-            input_tokens=int(getattr(usage, 'input_tokens', 0) or 0),
-            output_tokens=int(getattr(usage, 'output_tokens', 0) or 0),
+            input_tokens=int(getattr(usage, "input_tokens", 0) or 0),
+            output_tokens=int(getattr(usage, "output_tokens", 0) or 0),
             model_name=self._model,
             retry_count=retry_count,
         )
@@ -135,48 +135,50 @@ class AnthropicCodeModel:
 
         def flush_tool_results() -> None:
             if pending_tool_results:
-                api_messages.append(
-                    {'role': 'user', 'content': list(pending_tool_results)}
-                )
+                api_messages.append({"role": "user", "content": list(pending_tool_results)})
                 pending_tool_results.clear()
 
         for message in messages:
-            role = message.get('role')
-            if role == 'tool_result':
+            role = message.get("role")
+            if role == "tool_result":
                 block: dict[str, Any] = {
-                    'type': 'tool_result',
-                    'tool_use_id': message.get('tool_call_id'),
-                    'content': str(message.get('content', '')),
+                    "type": "tool_result",
+                    "tool_use_id": message.get("tool_call_id"),
+                    "content": str(message.get("content", "")),
                 }
-                if message.get('is_error'):
-                    block['is_error'] = True
+                if message.get("is_error"):
+                    block["is_error"] = True
                 pending_tool_results.append(block)
                 continue
             flush_tool_results()
-            if role == 'user':
-                api_messages.append({'role': 'user', 'content': message.get('content', '')})
-            elif role == 'assistant':
+            if role == "user":
+                api_messages.append({"role": "user", "content": message.get("content", "")})
+            elif role == "assistant":
                 content: list[dict[str, Any]] = []
-                text = str(message.get('content', ''))
+                text = str(message.get("content", ""))
                 if text:
-                    content.append({'type': 'text', 'text': text})
-                for call in message.get('tool_calls', []):
+                    content.append({"type": "text", "text": text})
+                for call in message.get("tool_calls", []):
                     content.append(
                         {
-                            'type': 'tool_use',
-                            'id': call['id'],
-                            'name': call['name'],
-                            'input': call['arguments'],
+                            "type": "tool_use",
+                            "id": call["id"],
+                            "name": call["name"],
+                            "input": call["arguments"],
                         }
                     )
-                api_messages.append({'role': 'assistant', 'content': content})
+                api_messages.append({"role": "assistant", "content": content})
         flush_tool_results()
         return api_messages
 
 
 class AnthropicHtmlModel(AnthropicCodeModel):
-    prompt_file = 'codegen-html-runtime-system-prompt.txt'
+    prompt_file = "codegen-html-runtime-system-prompt.txt"
 
 
 class AnthropicMultiFileModel(AnthropicCodeModel):
-    prompt_file = 'codegen-multi-file-runtime-system-prompt.txt'
+    prompt_file = "codegen-multi-file-runtime-system-prompt.txt"
+
+
+class AnthropicVueModel(AnthropicCodeModel):
+    prompt_file = "codegen-vue-runtime-system-prompt.txt"

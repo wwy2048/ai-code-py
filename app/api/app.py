@@ -24,7 +24,7 @@ from app.services.apps import (
     update_app,
 )
 
-router = APIRouter(prefix='/app', tags=['app'])
+router = APIRouter(prefix="/app", tags=["app"])
 
 
 def _type_router(request: Request) -> CodeGenTypeRouter:
@@ -35,7 +35,7 @@ def _asset_cleaner(request: Request) -> AppAssetCleaner:
     return cast(AppAssetCleaner, request.app.state.asset_cleaner)
 
 
-@router.post('/create')
+@router.post("/create")
 async def add_app(
     payload: AppCreateRequest,
     request: Request,
@@ -46,7 +46,7 @@ async def add_app(
     return success(app_id)
 
 
-@router.put('/update')
+@router.put("/update")
 async def update_app_endpoint(
     payload: AppUpdateRequest,
     session: DbSession,
@@ -56,7 +56,7 @@ async def update_app_endpoint(
     return success(True)
 
 
-@router.delete('/delete')
+@router.delete("/delete")
 async def delete_app_endpoint(
     payload: DeleteRequest,
     request: Request,
@@ -67,27 +67,27 @@ async def delete_app_endpoint(
     return success(True)
 
 
-@router.get('/get')
+@router.get("/get")
 async def get_app_vo_by_id(
     id: int,
     session: DbSession,
     current_user: CurrentUser,
 ) -> dict:
     app_vo = await get_owned_app(session, id, current_user.id)
-    return success(app_vo.model_dump(mode='json', by_alias=True))
+    return success(app_vo.model_dump(mode="json", by_alias=True))
 
 
-@router.get('/detail/{app_id}')
+@router.get("/detail/{app_id}")
 async def get_app_detail(
     app_id: int,
     session: DbSession,
     current_user: CurrentUser,
 ) -> dict:
     app_vo = await get_owned_app(session, app_id, current_user.id)
-    return success(app_vo.model_dump(mode='json', by_alias=True))
+    return success(app_vo.model_dump(mode="json", by_alias=True))
 
 
-@router.post('/my/list/page/vo')
+@router.post("/my/list/page/vo")
 async def list_my_apps(
     payload: AppQueryRequest,
     session: DbSession,
@@ -96,25 +96,25 @@ async def list_my_apps(
     return success(await list_apps(session, payload, current_user_id=current_user.id))
 
 
-@router.post('/good/list/page/vo')
+@router.post("/good/list/page/vo")
 async def list_good_apps(payload: AppQueryRequest, session: DbSession) -> dict:
     return success(await list_apps(session, payload, featured_only=True))
 
 
-@router.post('/chat/gen/code')
+@router.post("/chat/gen/code")
 async def generate_code(
     payload: GenerationRequest,
     request: Request,
     session: DbSession,
     current_user: CurrentUser,
-    last_event_id: str | None = Header(default=None, alias='Last-Event-ID'),
+    last_event_id: str | None = Header(default=None, alias="Last-Event-ID"),
 ) -> StreamingResponse:
     app = await require_owned_app(session, payload.app_id, current_user.id)
     manager = request.app.state.generation_manager
     job = await manager.start_turn(
         app_id=app.id,
         user_id=current_user.id,
-        code_gen_type=app.code_gen_type or 'html',
+        code_gen_type=app.code_gen_type or "html",
         message=payload.message,
         request_id=payload.request_id,
     )
@@ -129,9 +129,9 @@ async def generate_code(
 
     return StreamingResponse(
         stream_events(),
-        media_type='text/event-stream',
+        media_type="text/event-stream",
         headers={
-            'Cache-Control': 'no-cache',
-            'X-Accel-Buffering': 'no',
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
         },
     )

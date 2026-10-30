@@ -8,8 +8,8 @@ from argon2.exceptions import InvalidHashError, VerificationError, VerifyMismatc
 
 from app.config import Settings
 
-_LEGACY_MD5_PATTERN = re.compile(r'^[0-9a-f]{32}$')
-_LEGACY_SALT = 'hhh'
+_LEGACY_MD5_PATTERN = re.compile(r"^[0-9a-f]{32}$")
+_LEGACY_SALT = "hhh"
 
 
 @dataclass(frozen=True)
@@ -33,7 +33,7 @@ class PasswordService:
 
     def verify(self, stored_password: str, raw_password: str) -> PasswordVerification:
         if _LEGACY_MD5_PATTERN.fullmatch(stored_password):
-            expected = hashlib.md5(f'{_LEGACY_SALT}{raw_password}'.encode()).hexdigest()
+            expected = hashlib.md5(f"{_LEGACY_SALT}{raw_password}".encode()).hexdigest()
             return PasswordVerification(
                 valid=hmac.compare_digest(expected, stored_password),
                 needs_upgrade=True,

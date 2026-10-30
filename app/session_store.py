@@ -12,7 +12,7 @@ class SessionStore:
 
     @staticmethod
     def _key(session_id: str) -> str:
-        return f'aicode:session:{session_id}'
+        return f"aicode:session:{session_id}"
 
     async def create(self, user_id: int) -> str:
         session_id = secrets.token_urlsafe(32)

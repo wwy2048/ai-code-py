@@ -37,8 +37,8 @@ class TurnJob:
                     id=len(self.events) + 1,
                     event=event,
                     data={
-                        'turnId': self.request_id,
-                        'sequence': len(self.events) + 1,
+                        "turnId": self.request_id,
+                        "sequence": len(self.events) + 1,
                         **payload,
                     },
                 )
@@ -74,7 +74,7 @@ class GenerationManager:
             existing = self._jobs.get(key)
             if existing is not None:
                 if existing.message != message:
-                    raise BusinessError(ErrorCode.PARAMS_ERROR, 'requestId 已用于其他消息')
+                    raise BusinessError(ErrorCode.PARAMS_ERROR, "requestId 已用于其他消息")
                 return existing
 
             job = TurnJob(
@@ -91,7 +91,7 @@ class GenerationManager:
 
     async def _run(self, job: TurnJob) -> None:
         async with self._app_locks[job.app_id]:
-            await job.emit('turn_started', {'appId': job.app_id})
+            await job.emit("turn_started", {"appId": job.app_id})
             try:
                 await self._executor.execute(
                     app_id=job.app_id,
@@ -102,17 +102,17 @@ class GenerationManager:
                     emit=job.emit,
                 )
             except Exception:
-                logger.exception('Turn %s 执行失败', job.request_id)
+                logger.exception("Turn %s 执行失败", job.request_id)
                 await job.emit(
-                    'error',
+                    "error",
                     {
-                        'code': int(ErrorCode.SYSTEM_ERROR),
-                        'message': '生成失败，请稍后重试',
+                        "code": int(ErrorCode.SYSTEM_ERROR),
+                        "message": "生成失败，请稍后重试",
                     },
                 )
-                await job.emit('turn_finished', {'status': 'failed'})
+                await job.emit("turn_finished", {"status": "failed"})
             else:
-                await job.emit('turn_finished', {'status': 'completed'})
+                await job.emit("turn_finished", {"status": "completed"})
             finally:
                 await job.finish()
 
@@ -124,7 +124,7 @@ class GenerationManager:
         cursor = last_event_id or 0
         if job.completed and cursor >= len(job.events):
             final_event = next(
-                (event for event in reversed(job.events) if event.event == 'turn_finished'),
+                (event for event in reversed(job.events) if event.event == "turn_finished"),
                 None,
             )
             if final_event is not None:
@@ -145,4 +145,4 @@ class GenerationManager:
     @staticmethod
     def encode_sse(event: TurnEvent) -> str:
         payload = json.dumps(event.data, ensure_ascii=False)
-        return f'id: {event.id}\nevent: {event.event}\ndata: {payload}\n\n'
+        return f"id: {event.id}\nevent: {event.event}\ndata: {payload}\n\n"

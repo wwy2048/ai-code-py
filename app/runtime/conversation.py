@@ -11,17 +11,17 @@ from app.runtime.tools import ToolExecutionResult
 
 
 class MessageType(StrEnum):
-    USER = 'user'
-    AI = 'ai'
-    TOOL = 'tool'
+    USER = "user"
+    AI = "ai"
+    TOOL = "tool"
 
 
 class MessageKind(StrEnum):
-    USER = 'user'
-    ASSISTANT = 'assistant'
-    TOOL_CALL = 'tool_call'
-    TOOL_RESULT = 'tool_result'
-    COMPACTION = 'compaction'
+    USER = "user"
+    ASSISTANT = "assistant"
+    TOOL_CALL = "tool_call"
+    TOOL_RESULT = "tool_result"
+    COMPACTION = "compaction"
 
 
 class ConversationStore:
@@ -44,9 +44,7 @@ class ConversationStore:
     async def _take_sequence(self) -> int:
         if self._next_sequence is None:
             current = await self._session.scalar(
-                select(func.max(ChatHistory.sequence)).where(
-                    ChatHistory.app_id == self._app_id
-                )
+                select(func.max(ChatHistory.sequence)).where(ChatHistory.app_id == self._app_id)
             )
             self._next_sequence = int(current or 0) + 1
         current = self._next_sequence
@@ -77,7 +75,7 @@ class ConversationStore:
             visible=False,
             tool_call_id=call.id,
             tool_name=call.name,
-            payload={'arguments': call.arguments},
+            payload={"arguments": call.arguments},
         )
 
     async def append_tool_result(self, call: ToolCall, result: ToolExecutionResult) -> None:
@@ -89,10 +87,10 @@ class ConversationStore:
             tool_call_id=call.id,
             tool_name=call.name,
             payload={
-                'output': result.output,
-                'input': result.public_input,
-                'durationMs': result.duration_ms,
-                'sizeBytes': result.size_bytes,
+                "output": result.output,
+                "input": result.public_input,
+                "durationMs": result.duration_ms,
+                "sizeBytes": result.size_bytes,
             },
             is_error=not result.ok,
         )

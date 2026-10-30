@@ -14,10 +14,10 @@ def set_session_cookie(response: Response, settings: Settings, session_id: str) 
         max_age=settings.session_ttl_seconds,
         httponly=True,
         secure=settings.session_cookie_secure,
-        samesite='lax',
-        path='/',
+        samesite="lax",
+        path="/",
     )
 
 
 def clear_session_cookie(response: Response, settings: Settings) -> None:
-    response.delete_cookie(key=settings.session_cookie_name, path='/')
+    response.delete_cookie(key=settings.session_cookie_name, path="/")

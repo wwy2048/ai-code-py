@@ -50,13 +50,13 @@ def create_app(
         await app.state.redis.aclose()
         await app.state.engine.dispose()
 
-    app = FastAPI(title='ai-code-py', lifespan=lifespan)
+    app = FastAPI(title="ai-code-py", lifespan=lifespan)
     app.state.settings = app_settings
     app.state.engine = app_engine
     app.state.redis = app_redis
     app.state.session_factory = async_sessionmaker(app_engine, expire_on_commit=False)
-    app.state.code_gen_type_router = (
-        code_gen_type_router or create_code_gen_type_router(app_settings)
+    app.state.code_gen_type_router = code_gen_type_router or create_code_gen_type_router(
+        app_settings
     )
     app.state.asset_cleaner = LocalAppAssetCleaner(
         app_settings, cover_cleaner=CosCoverCleaner(app_settings)
@@ -77,15 +77,15 @@ def create_app(
         CORSMiddleware,
         allow_origins=app_settings.cors_origins,
         allow_credentials=True,
-        allow_methods=['*'],
-        allow_headers=['*'],
+        allow_methods=["*"],
+        allow_headers=["*"],
     )
     workspace_root = Path(app_settings.workspace_root)
     workspace_root.mkdir(parents=True, exist_ok=True)
     app.mount(
-        f'{app_settings.api_prefix}/static',
+        f"{app_settings.api_prefix}/static",
         StaticFiles(directory=workspace_root, html=True),
-        name='static',
+        name="static",
     )
     app.include_router(health_router, prefix=app_settings.api_prefix)
     app.include_router(user_router, prefix=app_settings.api_prefix)

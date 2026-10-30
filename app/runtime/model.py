@@ -16,17 +16,17 @@ TextEmitter = Callable[[str], Awaitable[None]]
 
 @dataclass(frozen=True)
 class ModelReply:
-    text: str = ''
+    text: str = ""
     tool_calls: list[ToolCall] = field(default_factory=list)
     input_tokens: int = 0
     output_tokens: int = 0
-    model_name: str = ''
+    model_name: str = ""
     retry_count: int = 0
 
 
 class ModelCallStatus(StrEnum):
-    SUCCESS = 'success'
-    ERROR = 'error'
+    SUCCESS = "success"
+    ERROR = "error"
 
 
 class ModelCallError(RuntimeError):
@@ -52,20 +52,20 @@ class ScriptedHtmlModel:
         messages: list[dict[str, Any]],
         on_text: TextEmitter,
     ) -> ModelReply:
-        has_tool_result = any(message.get('role') == 'tool_result' for message in messages)
+        has_tool_result = any(message.get("role") == "tool_result" for message in messages)
         if has_tool_result:
-            text = '页面已生成，可以直接在右侧预览。'
+            text = "页面已生成，可以直接在右侧预览。"
             await on_text(text)
             return ModelReply(text=text)
 
-        prompt = str(messages[0].get('content', ''))
+        prompt = str(messages[0].get("content", ""))
         escaped_prompt = (
-            prompt.replace('&', '&amp;')
-            .replace('<', '&lt;')
-            .replace('>', '&gt;')
-            .replace('"', '&quot;')
+            prompt.replace("&", "&amp;")
+            .replace("<", "&lt;")
+            .replace(">", "&gt;")
+            .replace('"', "&quot;")
         )
-        html = f'''<!doctype html>
+        html = f"""<!doctype html>
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8" />
@@ -86,16 +86,16 @@ class ScriptedHtmlModel:
     <p>{escaped_prompt}</p>
   </main>
 </body>
-</html>'''
-        text = '我将创建 index.html。'
+</html>"""
+        text = "我将创建 index.html。"
         await on_text(text)
         return ModelReply(
             text=text,
             tool_calls=[
                 ToolCall(
-                    id='tool-write-index',
-                    name='write_file',
-                    arguments={'path': 'index.html', 'content': html},
+                    id="tool-write-index",
+                    name="write_file",
+                    arguments={"path": "index.html", "content": html},
                 )
             ],
         )
@@ -104,14 +104,14 @@ class ScriptedHtmlModel:
 class UnavailableAgentModel:
     """未配置模型密钥时给出可读失败，而不是静默伪造生成结果。"""
 
-    model_name = 'unavailable'
+    model_name = "unavailable"
 
     async def next_turn(
         self,
         messages: list[dict[str, Any]],
         on_text: TextEmitter,
     ) -> ModelReply:
-        raise RuntimeError('未配置 ANTHROPIC_API_KEY，无法调用生成模型')
+        raise RuntimeError("未配置 ANTHROPIC_API_KEY，无法调用生成模型")
 
 
 class ScriptedMultiFileModel:
@@ -122,38 +122,80 @@ class ScriptedMultiFileModel:
         messages: list[dict[str, Any]],
         on_text: TextEmitter,
     ) -> ModelReply:
-        has_tool_result = any(message.get('role') == 'tool_result' for message in messages)
+        has_tool_result = any(message.get("role") == "tool_result" for message in messages)
         if has_tool_result:
-            text = '多文件页面已生成。'
+            text = "多文件页面已生成。"
             await on_text(text)
             return ModelReply(text=text)
-        text = '我将创建 HTML、CSS 和 JavaScript 文件。'
+        text = "我将创建 HTML、CSS 和 JavaScript 文件。"
         await on_text(text)
         return ModelReply(
             text=text,
             tool_calls=[
                 ToolCall(
-                    id='write-index',
-                    name='write_file',
+                    id="write-index",
+                    name="write_file",
                     arguments={
-                        'path': 'index.html',
-                        'content': (
-                            '<!doctype html><html><head>'
+                        "path": "index.html",
+                        "content": (
+                            "<!doctype html><html><head>"
                             '<link rel="stylesheet" href="style.css"></head>'
-                            '<body><h1>Multi File</h1>'
+                            "<body><h1>Multi File</h1>"
                             '<script src="script.js"></script></body></html>'
                         ),
                     },
                 ),
                 ToolCall(
-                    id='write-style',
-                    name='write_file',
-                    arguments={'path': 'style.css', 'content': 'body { color: #1d4ed8; }'},
+                    id="write-style",
+                    name="write_file",
+                    arguments={"path": "style.css", "content": "body { color: #1d4ed8; }"},
                 ),
                 ToolCall(
-                    id='write-script',
-                    name='write_file',
-                    arguments={'path': 'script.js', 'content': 'console.log("ready");'},
+                    id="write-script",
+                    name="write_file",
+                    arguments={"path": "script.js", "content": 'console.log("ready");'},
                 ),
+            ],
+        )
+
+
+class ScriptedVueModel:
+    async def next_turn(self, messages: list[dict[str, Any]], on_text: TextEmitter) -> ModelReply:
+        results = [m for m in messages if m.get("role") == "tool_result"]
+        if any(
+            "构建失败" in str(m.get("content", "")) for m in messages if m.get("role") == "user"
+        ):
+            text = "根据构建错误修复组件。"
+            await on_text(text)
+            return ModelReply(
+                text=text,
+                tool_calls=[
+                    ToolCall(
+                        id="fix-vue",
+                        name="write_file",
+                        arguments={
+                            "path": "src/App.vue",
+                            "content": "<template><main><h1>Fixed Vue</h1></main></template>",
+                        },
+                    )
+                ],
+            )
+        if any(m.get("name") == "build_project" for m in results):
+            text = "Vue 页面已构建。"
+            await on_text(text)
+            return ModelReply(text=text)
+        text = "创建 Vue 页面。"
+        await on_text(text)
+        return ModelReply(
+            text=text,
+            tool_calls=[
+                ToolCall(
+                    id="write-vue",
+                    name="write_file",
+                    arguments={
+                        "path": "src/App.vue",
+                        "content": "<template><main><h1>Vue Generated</h1></main></template>",
+                    },
+                )
             ],
         )
