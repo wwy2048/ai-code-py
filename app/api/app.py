@@ -1,13 +1,17 @@
+import asyncio
 from collections.abc import AsyncIterator
+from pathlib import Path
 from typing import cast
 
 from fastapi import APIRouter, Header, Request
-from fastapi.responses import StreamingResponse
+from fastapi.responses import Response, StreamingResponse
 
 from app.app_assets import AppAssetCleaner
 from app.codegen_router import CodeGenTypeRouter
 from app.deployment import AppDeployer
 from app.deps import CurrentUser, DbSession
+from app.download import WorkspaceArchiveError, build_workspace_zip
+from app.errors import BusinessError
 from app.response import success
 from app.schemas import (
     AppCreateRequest,
@@ -110,6 +114,27 @@ async def get_app_detail(
 ) -> dict:
     app_vo = await get_owned_app(session, app_id, current_user.id)
     return success(app_vo.model_dump(mode="json", by_alias=True))
+
+
+@router.get("/download/{app_id}")
+async def download_app_code(
+    app_id: int,
+    request: Request,
+    session: DbSession,
+    current_user: CurrentUser,
+) -> Response:
+    app = await require_owned_app(session, app_id, current_user.id)
+    workspace_root = Path(request.app.state.settings.workspace_root)
+    try:
+        content = await asyncio.to_thread(build_workspace_zip, app, workspace_root)
+    except WorkspaceArchiveError as exc:
+        raise BusinessError(exc.code, str(exc)) from exc
+    filename = f"app-{app.id}.zip"
+    return Response(
+        content=content,
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @router.post("/my/list/page/vo")

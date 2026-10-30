@@ -593,6 +593,10 @@ const downloadCode = async () => {
     if (!response.ok) {
       throw new Error(`下载失败: ${response.status}`)
     }
+    if (response.headers.get('Content-Type')?.includes('application/json')) {
+      const errorEnvelope = await response.json()
+      throw new Error(String(errorEnvelope.message || '下载失败'))
+    }
     // 获取文件名
     const contentDisposition = response.headers.get('Content-Disposition')
     const fileName = contentDisposition?.match(/filename="(.+)"/)?.[1] || `app-${appId.value}.zip`
@@ -608,7 +612,7 @@ const downloadCode = async () => {
     message.success('代码下载成功')
   } catch (error) {
     console.error('下载失败：', error)
-    message.error('下载失败，请重试')
+    message.error(error instanceof Error ? error.message : '下载失败，请重试')
   } finally {
     downloading.value = false
   }
