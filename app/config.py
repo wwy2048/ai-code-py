@@ -43,6 +43,9 @@ class Settings(BaseSettings):
 
     app_memory_enabled: bool = False
     app_memory_max_chars: int = 4000
+    subagent_enabled: bool = False
+    subagent_max_rounds: int = 6
+    subagent_timeout_seconds: float = 60.0
 
     cos_secret_id: str | None = None
     cos_secret_key: str | None = None

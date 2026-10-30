@@ -50,6 +50,10 @@ class AnthropicCodeModel:
         messages: list[dict[str, Any]],
         on_text: TextEmitter,
     ) -> ModelReply:
+        tools = next(
+            (message["tools"] for message in reversed(messages) if "tools" in message),
+            TOOL_DEFINITIONS,
+        )
         emitted = False
         for attempt in range(self._max_retries):
             try:
@@ -58,7 +62,7 @@ class AnthropicCodeModel:
                     max_tokens=self._max_tokens,
                     system=self._system_prompt,
                     messages=cast(Any, self._to_api_messages(messages)),
-                    tools=cast(Any, TOOL_DEFINITIONS),
+                    tools=cast(Any, tools),
                 ) as stream:
                     async for delta in stream.text_stream:
                         if delta:

@@ -184,6 +184,28 @@ async def test_anthropic_model_summarizes_context_without_tools() -> None:
     assert "旧摘要" in request["messages"][0]["content"]
 
 
+async def test_anthropic_model_uses_dynamic_tools_from_runtime_messages() -> None:
+    final = SimpleNamespace(
+        content=[SimpleNamespace(type="text", text="完成")],
+        usage=SimpleNamespace(input_tokens=1, output_tokens=1),
+    )
+    client = FakeInferenceClient([FakeStream(["完成"], final)])
+    model = AnthropicHtmlModel(_settings(), client=client)  # type: ignore[arg-type]
+    dynamic_tools = [{"name": "delegate_subagent", "description": "委派", "input_schema": {}}]
+
+    async def on_text(text: str) -> None:
+        return None
+
+    await model.next_turn(
+        [{"role": "user", "content": "委派", "tools": dynamic_tools}],
+        on_text,
+    )
+
+    request = client.messages.request
+    assert request is not None
+    assert request["tools"] == dynamic_tools
+
+
 class BrokenStream(FakeStream):
     @property
     def text_stream(self) -> AsyncIterator[str]:

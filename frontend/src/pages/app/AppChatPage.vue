@@ -476,6 +476,15 @@ const generateCode = async (userMessage: string, aiMessageIndex: number) => {
         }
         break
       }
+      case 'subagent_started':
+        append('\n\n> 子代理开始处理局部任务...\n\n')
+        break
+      case 'subagent_finished':
+        append('\n\n> 子代理已完成局部任务。\n\n')
+        break
+      case 'subagent_failed':
+        append('\n\n> 子代理执行失败，主流程将继续处理。\n\n')
+        break
       case 'turn_finished':
         isGenerating.value = false
         if (data.status === 'completed') {

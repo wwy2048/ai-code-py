@@ -87,6 +87,9 @@ def create_app(
         ),
         memory_enabled=app_settings.app_memory_enabled,
         memory_max_chars=app_settings.app_memory_max_chars,
+        subagent_enabled=app_settings.subagent_enabled,
+        subagent_max_rounds=app_settings.subagent_max_rounds,
+        subagent_timeout_seconds=app_settings.subagent_timeout_seconds,
     )
     app.state.generation_manager = GenerationManager(turn_executor)
 

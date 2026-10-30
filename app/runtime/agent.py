@@ -15,6 +15,7 @@ from app.runtime.messages import (
     tool_use_block,
 )
 from app.runtime.model import AgentModel, ContextSummarizer, ModelCallStatus, ModelReply
+from app.runtime.subagent import SubagentRunner
 from app.runtime.tools import ToolRegistry
 from app.runtime.vue_project import VueProjectBuilder, VueProjectTemplate
 from app.runtime.workspace import Workspace
@@ -39,6 +40,9 @@ class AgentTurnExecutor:
         context_compactor: ContextCompactor | None = None,
         memory_enabled: bool = False,
         memory_max_chars: int = 4000,
+        subagent_enabled: bool = False,
+        subagent_max_rounds: int = 6,
+        subagent_timeout_seconds: float = 60.0,
     ) -> None:
         self._session_factory = session_factory
         self._workspace_root_path = workspace_root_path
@@ -47,6 +51,9 @@ class AgentTurnExecutor:
         self._context_compactor = context_compactor
         self._memory_enabled = memory_enabled
         self._memory_max_chars = memory_max_chars
+        self._subagent_enabled = subagent_enabled
+        self._subagent_max_rounds = subagent_max_rounds
+        self._subagent_timeout_seconds = subagent_timeout_seconds
         self._vue_template = VueProjectTemplate()
 
     async def execute(
@@ -114,6 +121,41 @@ class AgentTurnExecutor:
                     return result.output, result.dist_size_bytes
 
                 extra_handlers["build_project"] = build_project
+            if self._subagent_enabled:
+                runner = SubagentRunner(
+                    workspace,
+                    self._model_factory,
+                    code_gen_type=code_gen_type,
+                    max_rounds=self._subagent_max_rounds,
+                    timeout_seconds=self._subagent_timeout_seconds,
+                )
+                extra_tools.append(
+                    {
+                        "name": "delegate_subagent",
+                        "description": "把明确范围的子任务委派给一级子代理，仅返回最终摘要。",
+                        "input_schema": {
+                            "type": "object",
+                            "properties": {
+                                "task": {"type": "string"},
+                                "workdir": {"type": "string"},
+                            },
+                            "required": ["task", "workdir"],
+                        },
+                    }
+                )
+
+                async def delegate_subagent(
+                    arguments: dict[str, Any],
+                ) -> tuple[str, None]:
+                    summary = await runner.run(
+                        task=str(arguments["task"]),
+                        workdir=str(arguments["workdir"]),
+                        emit=emit,
+                        turn_id=turn_id,
+                    )
+                    return summary, None
+
+                extra_handlers["delegate_subagent"] = delegate_subagent
             registry = ToolRegistry(
                 workspace,
                 _ALLOWED_WRITE_PATHS.get(code_gen_type, set()),
