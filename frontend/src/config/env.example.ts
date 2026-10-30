@@ -4,7 +4,7 @@
  * 在项目根目录创建 .env.local 或 .env.development 文件，并添加以下配置：
  *
  * # 应用部署域名
- * VITE_DEPLOY_DOMAIN=http://localhost
+ * VITE_DEPLOY_DOMAIN=http://localhost:8123/api/deploy
  *
  * # API 基础地址
  * VITE_API_BASE_URL=http://localhost:8123/api

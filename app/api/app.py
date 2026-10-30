@@ -6,10 +6,12 @@ from fastapi.responses import StreamingResponse
 
 from app.app_assets import AppAssetCleaner
 from app.codegen_router import CodeGenTypeRouter
+from app.deployment import AppDeployer
 from app.deps import CurrentUser, DbSession
 from app.response import success
 from app.schemas import (
     AppCreateRequest,
+    AppDeployRequest,
     AppQueryRequest,
     AppUpdateRequest,
     DeleteRequest,
@@ -23,6 +25,7 @@ from app.services.apps import (
     require_owned_app,
     update_app,
 )
+from app.services.deployments import deploy_app
 
 router = APIRouter(prefix="/app", tags=["app"])
 
@@ -33,6 +36,10 @@ def _type_router(request: Request) -> CodeGenTypeRouter:
 
 def _asset_cleaner(request: Request) -> AppAssetCleaner:
     return cast(AppAssetCleaner, request.app.state.asset_cleaner)
+
+
+def _deployer(request: Request) -> AppDeployer:
+    return cast(AppDeployer, request.app.state.app_deployer)
 
 
 @router.post("/create")
@@ -65,6 +72,23 @@ async def delete_app_endpoint(
 ) -> dict:
     await delete_app(session, current_user.id, payload.id, _asset_cleaner(request))
     return success(True)
+
+
+@router.post("/appDeploy")
+async def deploy_app_endpoint(
+    payload: AppDeployRequest,
+    request: Request,
+    session: DbSession,
+    current_user: CurrentUser,
+) -> dict:
+    deploy_url = await deploy_app(
+        session,
+        user_id=current_user.id,
+        app_id=payload.app_id,
+        deployer=_deployer(request),
+        key_factory=request.app.state.deploy_key_factory,
+    )
+    return success(deploy_url)
 
 
 @router.get("/get")

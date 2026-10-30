@@ -123,9 +123,10 @@ import { message } from 'ant-design-vue'
 import { useLoginUserStore } from '@/stores/loginUser'
 import { getAppVoById, updateApp, updateAppByAdmin } from '@/api/appController'
 import { formatCodeGenType } from '@/utils/codeGenTypes'
+import { getDeployUrl } from '@/config/env'
+import { openExternalUrl } from '@/utils/openExternal'
 import { formatTime } from '@/utils/time'
 import UserInfo from '@/components/UserInfo.vue'
-import { getStaticPreviewUrl } from '@/config/env'
 import type { FormInstance } from 'ant-design-vue'
 
 const route = useRoute()
@@ -262,9 +263,8 @@ const goToChat = () => {
 
 // 打开预览
 const openPreview = () => {
-  if (appInfo.value?.codeGenType && appInfo.value?.id) {
-    const url = getStaticPreviewUrl(appInfo.value.codeGenType, String(appInfo.value.id))
-    window.open(url, '_blank')
+  if (appInfo.value?.deployKey) {
+    openExternalUrl(getDeployUrl(appInfo.value.deployKey))
   }
 }
 

@@ -29,7 +29,12 @@
           下载代码
         </a-button>
 
-        <a-button type="primary" @click="deployApp" :loading="deploying">
+        <a-button
+          type="primary"
+          @click="deployApp"
+          :loading="deploying"
+          :disabled="!isOwner"
+        >
           <template #icon>
             <CloudUploadOutlined />
           </template>
@@ -186,7 +191,8 @@ import MarkdownRenderer from '@/components/MarkdownRenderer.vue'
 import AppDetailModal from '@/components/AppDetailModal.vue'
 import DeploySuccessModal from '@/components/DeploySuccessModal.vue'
 import aiAvatar from '@/assets/aiAvatar.png'
-import { API_BASE_URL, getStaticPreviewUrl } from '@/config/env'
+import { API_BASE_URL, getDeployUrl, getStaticPreviewUrl } from '@/config/env'
+import { openExternalUrl } from '@/utils/openExternal'
 
 import {
   CloudUploadOutlined,
@@ -340,6 +346,9 @@ const fetchAppInfo = async () => {
     const res = await getAppVoById({ id: id as unknown as number })
     if (res.data.code === 0 && res.data.data) {
       appInfo.value = res.data.data
+      if (appInfo.value.deployKey) {
+        deployUrl.value = getDeployUrl(appInfo.value.deployKey)
+      }
 
       // 获取对话历史
       await fetchChatHistory()
@@ -552,14 +561,14 @@ const deployApp = async () => {
 // 在新窗口打开预览
 const openInNewTab = () => {
   if (previewUrl.value) {
-    window.open(previewUrl.value, '_blank')
+    openExternalUrl(previewUrl.value)
   }
 }
 
 // 打开部署的网站
 const openDeployedSite = () => {
   if (deployUrl.value) {
-    window.open(deployUrl.value, '_blank')
+    openExternalUrl(deployUrl.value)
   }
 }
 

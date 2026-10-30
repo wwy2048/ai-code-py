@@ -63,6 +63,10 @@ class DeleteRequest(ApiModel):
     id: int
 
 
+class AppDeployRequest(ApiModel):
+    app_id: int = Field(gt=0)
+
+
 class UserVO(ApiModel):
     id: int
     user_account: str

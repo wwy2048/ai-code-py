@@ -5,6 +5,7 @@ import { message } from 'ant-design-vue'
 import { useLoginUserStore } from '@/stores/loginUser'
 import { addApp, listMyAppVoByPage, listGoodAppVoByPage } from '@/api/appController'
 import { getDeployUrl } from '@/config/env'
+import { openExternalUrl } from '@/utils/openExternal'
 import AppCard from '@/components/AppCard.vue'
 
 const router = useRouter()
@@ -125,7 +126,7 @@ const viewChat = (appId: string | number | undefined) => {
 const viewWork = (app: API.AppVO) => {
   if (app.deployKey) {
     const url = getDeployUrl(app.deployKey)
-    window.open(url, '_blank')
+    openExternalUrl(url)
   }
 }
 

@@ -7,6 +7,11 @@
           <span class="info-label">创建者：</span>
           <UserInfo :user="app?.user" size="small" />
         </div>
+
+        <div v-if="app?.deployKey" class="info-item">
+          <span class="info-label">分享地址：</span>
+          <a-button type="link" size="small" @click="handleOpenShare">打开部署网站</a-button>
+        </div>
         <div class="info-item">
           <span class="info-label">创建时间：</span>
           <span>{{ formatTime(app?.createTime) }}</span>
@@ -56,6 +61,8 @@ import { EditOutlined, DeleteOutlined } from '@ant-design/icons-vue'
 import UserInfo from './UserInfo.vue'
 import { formatTime } from '@/utils/time'
 import { formatCodeGenType } from '@/utils/codeGenTypes.ts'
+import { getDeployUrl } from '@/config/env'
+import { openExternalUrl } from '@/utils/openExternal'
 
 interface Props {
   open: boolean
@@ -86,6 +93,13 @@ const handleEdit = () => {
 
 const handleDelete = () => {
   emit('delete')
+}
+
+const handleOpenShare = () => {
+  const deployKey = props.app?.deployKey
+  if (deployKey) {
+    openExternalUrl(getDeployUrl(deployKey))
+  }
 }
 </script>
 

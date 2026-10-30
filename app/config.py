@@ -35,6 +35,7 @@ class Settings(BaseSettings):
 
     workspace_root: str = "tmp/codeOutput"
     deploy_root: str = "tmp/code_deploy"
+    deploy_url_base: str = "http://localhost:8123/api/deploy"
     screenshots_root: str = "tmp/screenshots"
 
     cos_secret_id: str | None = None

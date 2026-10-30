@@ -18,6 +18,7 @@ from app.app_assets import CosCoverCleaner, LocalAppAssetCleaner
 from app.codegen_router import CodeGenTypeRouter, create_code_gen_type_router
 from app.config import Settings, get_settings
 from app.db import create_engine
+from app.deployment import LocalAppDeployer
 from app.errors import (
     BusinessError,
     handle_business_error,
@@ -30,6 +31,7 @@ from app.runtime.compaction import ContextCompactor
 from app.runtime.factory import create_agent_model_factory
 from app.runtime.manager import GenerationManager
 from app.runtime.model import AgentModel
+from app.services.deployments import generate_deploy_key
 
 
 def create_app(
@@ -62,6 +64,8 @@ def create_app(
     app.state.asset_cleaner = LocalAppAssetCleaner(
         app_settings, cover_cleaner=CosCoverCleaner(app_settings)
     )
+    app.state.app_deployer = LocalAppDeployer(app_settings)
+    app.state.deploy_key_factory = generate_deploy_key
     turn_executor = AgentTurnExecutor(
         app.state.session_factory,
         Path(app_settings.workspace_root),
@@ -88,10 +92,17 @@ def create_app(
     )
     workspace_root = Path(app_settings.workspace_root)
     workspace_root.mkdir(parents=True, exist_ok=True)
+    deploy_root = Path(app_settings.deploy_root)
+    deploy_root.mkdir(parents=True, exist_ok=True)
     app.mount(
         f"{app_settings.api_prefix}/static",
         StaticFiles(directory=workspace_root, html=True),
         name="static",
+    )
+    app.mount(
+        f"{app_settings.api_prefix}/deploy",
+        StaticFiles(directory=deploy_root, html=True),
+        name="deploy",
     )
     app.include_router(health_router, prefix=app_settings.api_prefix)
     app.include_router(user_router, prefix=app_settings.api_prefix)

@@ -47,6 +47,7 @@ async def app_context(tmp_path: Path) -> AsyncIterator[AppContext]:
         password_hash_parallelism=1,
         workspace_root=str(tmp_path / "codeOutput"),
         deploy_root=str(tmp_path / "code_deploy"),
+        deploy_url_base="http://testserver/api/deploy",
         screenshots_root=str(tmp_path / "screenshots"),
         _env_file=None,  # type: ignore[call-arg]
     )
