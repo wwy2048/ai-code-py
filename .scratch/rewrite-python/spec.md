@@ -3,11 +3,11 @@ Status: ready-for-agent
 
 ## Problem Statement
 
-现有 ai-code 平台后端为 Java 21 / Spring Boot + LangChain4j，代码量约 50 个 Java 文件，其中 LLM 接入层（声明式 AI 服务、消息窗口记忆、单工具）仅占约 15%，其余为认证、应用 CRUD、对话历史、部署、静态预览、截图、COS 等业务面。用户的目标是转型 agent 开发工程师，并希望把 minicodex 的多智能体运行时能力运用进产品。经三方案对比，决定新建独立 Python 项目 `ai-code-py` 全量重写后端：单 Python 栈维护、自研 agent 运行时作为产品内核、前端复用零改动、数据库沿用现有 schema 数据零迁移。
+现有 ai-code 平台后端为 Java 21 / Spring Boot + LangChain4j，代码量约 50 个 Java 文件，其中 LLM 接入层（声明式 AI 服务、消息窗口记忆、单工具）仅占约 15%，其余为认证、应用 CRUD、对话历史、部署、静态预览、截图、COS 等业务面。用户的目标是转型 agent 开发工程师，并希望把 minicodex 的运行时设计运用进产品。经三方案对比，决定新建独立 Python 项目 `ai-code-py` 全量重写后端：单 Python 栈维护、自研 agent 运行时作为产品内核、前端源码复制进新仓库后允许演进、数据库沿用现有表和数据并允许做增量字段扩展。
 
 ## Solution
 
-用户打开 ai-code-py 提供的 Web 前端（与旧版完全一致），注册登录后创建"应用"，以对话方式让 agent 迭代生成网站：agent 通过文件工具把代码写入该应用的工作目录，流式推送生成过程，生成后可实时预览、一键部署并自动生成封面截图。产品内核为项目内自研的代理运行时：多轮工具循环、文件工具、生成会话文件持久化、上下文压缩、跨会话记忆与子代理，全部按 web 场景裁剪。
+用户打开 ai-code-py 提供的 Web 前端，注册登录后创建"应用"，以对话方式让 agent 迭代生成网站：agent 通过文件工具把代码写入该应用的工作目录，流式推送生成过程，生成后可实时预览、一键部署并自动生成封面截图。产品内核为项目内自研的代理运行时：三种生成类型共用多轮工具循环，生成会话持久化于 MySQL，超长会话通过活动标记和压缩摘要控制上下文；持久记忆与有界子代理作为后续阶段能力，按 web 场景逐步裁剪落地。
 
 ## User Stories
 
@@ -32,35 +32,42 @@ Status: ready-for-agent
 19. 作为用户，我想在未登录时被正确引导到登录页（40100），以便不产生困惑。
 20. 作为开发者，我想让运行时的上下文在超长会话中自动压缩，以便不突破模型窗口。
 21. 作为开发者，我想用脚本化的模型输出做确定性测试，以便 CI 稳定可复现。
-22. 作为用户，我想让复杂生成任务被拆成子代理执行，以便大型项目不被单次循环拖垮。
+22. 作为用户，我想让复杂生成任务被拆成有界子代理执行，以便大型项目不被单次循环拖垮（后续阶段能力）。
 23. 作为用户，我想让 Vue 项目自动构建后部署 dist，以便框架类应用也能预览。
 24. 作为开发者，我想观测每次模型调用的耗时与错误，以便定位生成问题。
-25. 作为用户，我想让生成中的工具执行情况（Vue 模式）可见，以便了解 agent 到底在做什么。
+25. 作为用户，我想让生成中的工具执行情况可见，以便了解 agent 到底在做什么。
 26. 作为用户，我想在服务异常时收到一致的信封错误消息，以便知道发生了什么而不是看到裸异常。
 
 ## Implementation Decisions
 
 - **技术栈（ADR-0001）**：Python 3.12 + FastAPI + uvicorn + SQLAlchemy 2.0 + alembic + uv + pytest，单进程部署起步。
-- **独立仓库**：ai-code-py 为独立 git 仓库，与 ai-code 仓库完全分离；ai-code 保留为移植参考，直至功能等价后归档。
-- **数据库**：沿用现有 MySQL `aicode` 库与 user / app / chat_history 三表 schema，数据零迁移；alembic 从当前 schema 建立基线，不引入任何 schema 变更。
-- **认证**：cookie + redis session，复刻现有登录 / 注册 / 用户信息等端点路径；响应信封统一为 `{code, data, message}`，`0` 表示成功、`40100` 表示未登录（已事实核查前端仅硬编码这两个码，其余错误码可自定义）。
+- **独立仓库与前端源码（ADR-0005）**：ai-code-py 为独立 git 仓库，与 ai-code 仓库完全分离；先复制 ai-code 前端源码到本仓库并提交一个可构建基线，后续允许按新运行时协议直接修改。ai-code 保留为业务与视觉参考，直至新项目功能稳定后归档。
+- **数据库（ADR-0004）**：沿用现有 MySQL `aicode` 库与 user / app / chat_history 三表及其数据；允许通过 alembic 做增量字段和索引扩展，不重建表、不要求一次性数据迁移。agent 运行时会话不再使用 JSONL 文件，而是持久化到 MySQL 的 `chat_history` 及其扩展字段。
+- **认证**：cookie + redis session；响应信封统一为 `{code, data, message}`，`0` 表示成功、`40100` 表示未登录。旧 Spring Session 不迁移，现有用户需要重新登录；兼容验证旧 MD5 密码，并在成功登录后升级为 Argon2id。所有第三方密钥重新配置，不复制旧文件中的明文密钥。
 - **模型（ADR-0003）**：运行时按 Anthropic Messages API 设计，直连 DeepSeek 的 anthropic 兼容端点；模型与密钥经环境配置注入；不再使用 qwen3-max / DashScope。
-- **代理运行时（ADR-0002）**：项目内自研，借鉴 minicodex 设计、实现全重写，不作为依赖集成。落地能力：agent 循环（多轮工具循环）、文件工具（read / write / edit / glob / bash）、生成会话文件持久化、上下文压缩、跨会话记忆、子代理；明确不做 teammate / worktree / MCP / cron / plan gate / TUI。
+- **代理运行时（ADR-0002、ADR-0004）**：项目内自研，借鉴 minicodex 设计、实现全重写，不作为依赖集成。V1 核心能力为三种生成类型共用 agent 工具循环、文件工具、受控构建、MySQL 会话持久化与恢复、上下文压缩；持久记忆与有界子代理后置到 M2，通过 feature flag 落地。明确不做 teammate / worktree / MCP / cron / plan gate / TUI。
+- **子代理边界（M2）**：采用一级子代理，可在受控目录内读写文件，但同一时刻只运行一个；不能嵌套、不能执行 shell、不能向用户提问，完成后只向主代理返回摘要。并行写入留到具备独立 Worktree 或隔离目录后再做。
 - **并发模型**：单进程 + per-app 运行时实例；每个实例的工具 cwd 绑定对应应用的工作目录（`tmp/codeOutput/{type}_{appId}` 约定），文件操作含越界守卫；同一应用请求串行、不同应用并发；接口层预留升级为 per-app 子进程的余地。
-- **生成会话与对话历史的关系**：chat_history 表继续作为 UI 数据源持久化；生成会话文件作为模型上下文（含压缩检查点），会话恢复时投影活动链。
-- **SSE 协议**：HTML / MULTI_FILE 保持文本流（推送 agent 叙述）；VUE_PROJECT 保持 JSON 事件流（工具请求 / 工具执行 / AI 响应事件），逐字段对齐现有前端消费协议。
-- **生成类型路由**：复用现有路由提示词，一次轻量模型调用将初始需求判定为 HTML / MULTI_FILE / VUE_PROJECT。
-- **部署与预览**：复刻部署键约定与静态文件服务；VUE_PROJECT 先经子进程执行构建（npm run build）再部署 dist 目录。
+- **安全边界（ADR-0006）**：按公网多租户模型设计，但首版本地单进程部署。不向模型暴露任意 `bash` 或通用命令；仅提供文件工具和受控构建工具。文件工具校验根目录、符号链接/重解析点、文件大小、数量和超时；命令不继承服务端密钥。V1 的 Vue 项目采用固定可信模板，模型只能修改受控页面源码，不能任意修改 `package.json`、Vite 配置或安装新依赖；若后续需要完整 shell 或任意 npm 依赖，必须引入容器隔离。
+- **生成会话与对话历史的关系**：`chat_history` 同时承载 UI 消息与运行时消息，采用单表增量扩展。新增 `turn_id`、`sequence`、`message_kind`、结构化 `payload`、`visible`、`active`、`tool_call_id`、`tool_name`、`is_error`、`compacted_by` 等字段；保留原 `message` / `messageType` 供 UI 兼容与文本检索。旧 user / ai 行回填为 `visible=1, active=1`。压缩不删除历史行，只将已被摘要覆盖的消息标记为 `active=0`，并追加一条 `visible=0, active=1` 的压缩摘要。
+- **SSE 协议（ADR-0007）**：生成入口改为 `POST /app/chat/gen/code`，请求体为 `{appId, message, requestId}`，响应为 `text/event-stream`。事件类型至少包括 `turn_started`、`text_delta`、`tool_started`、`tool_finished`、`compaction`、`turn_finished`、`error`；每个事件携带 `turnId`、`sequence`，并使用 SSE `id` 支持 Last-Event-ID 续传。客户端断开不取消生成；同一 requestId 在活跃回合内重连时从内存事件缓冲续传，已完成回合返回完成事件并让前端刷新历史。
+- **工具事件展示**：向前端只发送工具名、文件路径、耗时、状态、文件大小和截断后的错误预览；完整参数与结果保存在隐藏运行时消息中，不通过 SSE 发送整段文件内容。
+- **生成类型路由**：以现有路由需求为素材补齐或重写提示词，一次轻量模型调用将初始需求判定为 HTML / MULTI_FILE / VUE_PROJECT。
+- **部署与预览**：复刻部署键约定与静态文件服务；VUE_PROJECT 由固定可信模板构建器执行受控构建，再把 dist 目录部署。旧应用产物一次性复制到新项目 `tmp/codeOutput`、`tmp/code_deploy`、`tmp/screenshots`，运行时数据根目录可配置。
 - **截图与封面**：部署后异步执行 Selenium 截图并上传 COS，更新应用封面字段（等价现有异步流程）。
 - **可观测性**：请求与模型调用耗时中间件（等价现有 AiRequestResponseAspect）；异常统一收敛为信封错误码。
-- **API 文档兼容**：后端监听 8123、上下文前缀 `/api`，并提供 `/api/v3/api-docs` 别名，保持前端 openapi2ts 配置与开发环境变量零改动。
-- **提示词资产**：沿用现有三套系统提示词（HTML / MULTI_FILE / VUE_PROJECT）与路由提示词，作为运行时身份与生成指引。
+- **API 与前端协作**：后端监听 8123、上下文前缀 `/api`，提供 FastAPI OpenAPI 文档；前端已内置仓库，可按新协议修改并重新生成 API 客户端，不再要求旧环境变量或旧 SSE 包装零改动。
+- **前端范围**：保留现有页面结构、路由和视觉风格，只改造 API 客户端、对话流、工具进度、错误展示与必要的管理端字段；不在本次重写中整体重做 UI。
+- **应用删除**：用户删除应用时，在同一数据库事务中物理删除 `app` 与相关 `chat_history` 记录；提交后清理 Workspace、部署目录和 M2 记忆，COS 封面做 best-effort 删除。文件清理失败必须记录并告警，但应用不得继续可访问。
+- **管理员可见性**：普通对话接口与后台列表默认只返回 visible 消息；管理员可在单个回合的调试详情中查看隐藏运行时消息，但工具大结果只展示截断预览，不暴露密钥、环境变量或完整文件正文。
+- **提示词资产**：以现有三套系统提示词和路由提示词为素材重写。三种生成类型统一使用文件工具，因此不再要求 HTML / MULTI_FILE 输出 Markdown 代码块；原代码块解析器仅作为兼容兜底。现有源码中的路由提示词文件缺失，迁移前需先补齐或重写。
 
 ## Testing Decisions
 
-- **两个测试 seam**：
-  - S1 HTTP/SSE API seam：通过 FastAPI TestClient 从公开契约验证——注册登录（cookie session）、应用 CRUD、对话历史分页、`{code,data,message}` 信封与 40100、两种 SSE 流协议的形状；模型调用在 S2 处 mock。
-  - S2 模型调用 seam：mock Anthropic transport 为脚本化输出（预编排的 tool_use 序列），驱动 agent_loop 走确定性路径——验证工具分发、文件落盘到工作目录、越界拦截、生成会话持久化与恢复、压缩、子代理。
+- **三个测试 seam**：
+  - S1 HTTP/SSE API seam：通过 FastAPI TestClient 从公开契约验证——注册登录（cookie session）、应用 CRUD 与删除清理、对话历史分页、`{code,data,message}` 信封与 40100、POST SSE 事件顺序与字段、requestId 去重和 Last-Event-ID 续传；模型调用在 S2 处 mock。
+  - S2 模型调用 seam：mock Anthropic transport 为脚本化输出（预编排的 tool_use 序列），驱动 agent_loop 走确定性路径——验证工具分发、文件落盘到工作目录、越界拦截、MySQL 会话持久化与恢复、压缩、子代理。
+  - S3 命令执行 seam：mock 安装与构建进程，验证白名单、超时、输出截断、失败回传与隔离边界；不执行真实模型生成的任意命令。
 - **少量单元测试**仅用于纯内部且无外部可观测点的地方（如文件路径越界守卫）。
 - **好测试的标准**：只测外部行为，不测实现细节；mock 只发生在模型 transport seam；产物断言以工作目录落盘结果与 SSE 事件序列为准。
 - **真模型冒烟脚本**：独立于 seam 的验证工具（非测试），分别跑通 HTML / MULTI_FILE / VUE_PROJECT 三类，判据为"agent 循环真能生成出可预览的项目"；它是方案 A 成立与否的判据，优先级最高（核心闭环先行）。
@@ -68,9 +75,11 @@ Status: ready-for-agent
 
 ## Out of Scope
 
-- 前端任何改动（复用零改动为硬约束）。
-- 数据库 schema 变更与数据迁移。
+- 以旧前端逐字节兼容为硬约束；前端只需保留产品流程和可迁移的 API 调用习惯，允许直接修改。
+- 前端整体视觉重设计、页面信息架构重构和无关功能扩展。
+- 破坏性数据库 schema 变更、重建表或强制一次性数据迁移；允许增量字段与索引扩展。
 - teammate 多智能体协作、worktree、MCP 连接、cron、plan gate 审批、TUI（ADR-0002 明确不做）。
+- 任意宿主机 shell、任意 npm 依赖安装、模型生成的 Node 脚本直接执行、跨应用自动记忆注入。
 - minicodex 代码复制或依赖集成（ADR-0002）。
 - qwen3-max 保留与中继方案（ADR-0003 弃用；中继仅作将来可选项）。
 - Docker 化部署（本地 uvicorn 起步，后置到交付阶段）。
@@ -79,6 +88,11 @@ Status: ready-for-agent
 ## Further Notes
 
 - minicodex 仅作为设计参考，实现为全重写；README 需标注设计参考来源。
+- 前端已复制到 `frontend/` 并形成可构建初始提交 `34fc137`；后续协议适配直接在该基线上演进。
+- M2 持久记忆按应用隔离，禁止自动跨应用注入；删除应用时同步清理其记忆。
+- 工具事件不向浏览器发送完整参数或文件正文，完整运行记录只保存在隐藏会话消息中。
+- 旧应用运行时文件已复制到新项目 `tmp/`，并完成文件数量与哈希校验；这些文件不进入 git。
+- agent 会话以 MySQL 为唯一持久化真相，不引入 JSONL 会话文件；是否保留额外调试快照不是需求。
 - 错误码除 `0` / `40100` 外可自定义（已核查前端无其他硬编码码）。
 - 迁移顺序：核心闭环先行（认证 + 应用 CRUD + 对话历史 + agent 生成 → 落盘 → 预览），外围（部署 / 截图 / COS / 项目下载）随后等价迁移。
 - 双项目均采用本地 Markdown issue 约定（`.scratch/<feature>/` + `Status:` 行 + 默认 triage 词汇表）。
