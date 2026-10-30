@@ -2,6 +2,14 @@
 /* eslint-disable */
 import request from '@/request'
 
+/** 管理员获取单个 Turn 的隐藏运行时详情 */
+export async function getChatTurnDebug(appId: number, turnId: string) {
+  return request<API.BaseResponseChatTurnDebug>(
+    `/chatHistory/admin/turn/${appId}/${encodeURIComponent(turnId)}`,
+    { method: 'GET' }
+  )
+}
+
 /** 此处后端没有提供注释 POST /chatHistory/admin/list/page/vo */
 export async function listAllChatHistoryByPageForAdmin(
   body: API.ChatHistoryQueryRequest,

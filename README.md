@@ -26,6 +26,7 @@ Python 全量重写 ai-code 的后端与 Agent Runtime。
 - 部署后异步使用无头 Chrome 截图、上传 COS 并更新应用封面，失败不影响部署
 - 应用所有者可下载 HTML / MULTI_FILE / Vue Workspace 源码 ZIP
 - 管理员可治理用户、全部应用、精选优先级与违规 App 清理
+- 管理员可按用户/App/类型/时间检索会话，并查看 Turn 隐藏工具与模型调用观测
 
 未配置 `ANTHROPIC_API_KEY` 时，类型路由会安全回退为 HTML，应用仍可正常启动，但生成请求会返回可读失败。
 

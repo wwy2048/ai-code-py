@@ -114,6 +114,14 @@ declare namespace API {
     createTime?: string
     updateTime?: string
     isDelete?: number
+    turnId?: string
+    sequence?: number
+    messageKind?: string
+    visible?: boolean
+    active?: boolean
+    toolName?: string
+    isError?: boolean
+    preview?: string
   }
 
   type ChatHistoryQueryRequest = {
@@ -127,6 +135,52 @@ declare namespace API {
     userId?: number
     message?: string
     lastCreateTime?: string
+    startTime?: string
+    endTime?: string
+  }
+
+  type ChatTurnDebugMessage = {
+    id?: number
+    sequence?: number
+    messageKind?: string
+    messageType?: string
+    visible?: boolean
+    active?: boolean
+    isError?: boolean
+    toolCallId?: string
+    toolName?: string
+    toolInput?: Record<string, unknown>
+    durationMs?: number
+    sizeBytes?: number
+    preview?: string
+    createTime?: string
+  }
+
+  type ChatModelCallLog = {
+    id?: number
+    callKind?: string
+    modelName?: string
+    status?: string
+    durationMs?: number
+    inputTokens?: number
+    outputTokens?: number
+    errorType?: string
+    errorSummary?: string
+    retryCount?: number
+    createTime?: string
+  }
+
+  type ChatTurnDebug = {
+    appId?: number
+    turnId?: string
+    messages?: ChatTurnDebugMessage[]
+    modelCalls?: ChatModelCallLog[]
+  }
+
+  type BaseResponseChatTurnDebug = {
+    code?: number
+    data?: ChatTurnDebug
+    message?: string
   }
 
   type chatToGenCodeParams = {

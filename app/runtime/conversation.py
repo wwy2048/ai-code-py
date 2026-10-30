@@ -6,6 +6,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import ChatHistory, ModelCallLog
+from app.redaction import sanitize_sensitive_text
 from app.runtime.messages import (
     assistant_tool_calls_message,
     tool_result_message,
@@ -212,7 +213,7 @@ class ConversationStore:
                 input_tokens=input_tokens,
                 output_tokens=output_tokens,
                 error_type=error_type,
-                error_summary=error_summary,
+                error_summary=sanitize_sensitive_text(error_summary),
                 retry_count=retry_count,
             )
         )

@@ -104,6 +104,20 @@ class UserAdminUpdateRequest(ApiModel):
     user_role: str | None = None
 
 
+class ChatHistoryQueryRequest(ApiModel):
+    page_num: int = Field(default=1, ge=1)
+    page_size: int = Field(default=10, ge=1, le=20)
+    sort_field: str | None = None
+    sort_order: str | None = None
+    id: int | None = None
+    app_id: int | None = None
+    user_id: int | None = None
+    message_type: str | None = None
+    message: str | None = None
+    start_time: datetime | None = None
+    end_time: datetime | None = None
+
+
 class AppVO(ApiModel):
     id: int
     app_name: str | None
