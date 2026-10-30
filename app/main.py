@@ -85,6 +85,8 @@ def create_app(
             trigger_ratio=app_settings.context_compaction_trigger_ratio,
             fixed_overhead_tokens=app_settings.context_compaction_fixed_overhead_tokens,
         ),
+        memory_enabled=app_settings.app_memory_enabled,
+        memory_max_chars=app_settings.app_memory_max_chars,
     )
     app.state.generation_manager = GenerationManager(turn_executor)
 

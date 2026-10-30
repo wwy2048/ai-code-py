@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.runtime.compaction import ContextCompactor
 from app.runtime.conversation import ConversationStore
+from app.runtime.memory import MemoryStore
 from app.runtime.messages import (
     assistant_tool_calls_message,
     tool_result_message,
@@ -36,12 +37,16 @@ class AgentTurnExecutor:
         model_factory: Callable[[str], AgentModel],
         vue_builder: VueProjectBuilder | None = None,
         context_compactor: ContextCompactor | None = None,
+        memory_enabled: bool = False,
+        memory_max_chars: int = 4000,
     ) -> None:
         self._session_factory = session_factory
         self._workspace_root_path = workspace_root_path
         self._model_factory = model_factory
         self._vue_builder = vue_builder or VueProjectBuilder()
         self._context_compactor = context_compactor
+        self._memory_enabled = memory_enabled
+        self._memory_max_chars = memory_max_chars
         self._vue_template = VueProjectTemplate()
 
     async def execute(
@@ -70,6 +75,20 @@ class AgentTurnExecutor:
                     pending_text=prompt,
                     emit=emit,
                 )
+            memory_store = MemoryStore(
+                session,
+                app_id=app_id,
+                user_id=user_id,
+                max_chars=self._memory_max_chars,
+            )
+            memory_context = (
+                await memory_store.load_for_context() if self._memory_enabled else []
+            )
+            memory_message: str | None = None
+            if memory_context:
+                memory_message = (
+                    "[应用持久记忆]\n" + "\n\n".join(memory_context)
+                )[: self._memory_max_chars]
             history = await conversation.load_active_model_messages()
             await conversation.append_user(prompt)
             await conversation.commit()
@@ -102,6 +121,11 @@ class AgentTurnExecutor:
                 extra_handlers,
             )
             messages: list[dict[str, Any]] = [
+                *(
+                    [{"role": "user", "content": memory_message}]
+                    if memory_message
+                    else []
+                ),
                 *history,
                 {"role": "user", "content": prompt},
             ]
@@ -246,4 +270,6 @@ class AgentTurnExecutor:
 
             assistant_text = "\n\n".join(assistant_parts).strip() or "页面已生成。"
             await conversation.append_assistant(assistant_text)
+            if self._memory_enabled:
+                await memory_store.save_from_turn(turn_id, prompt, assistant_text)
             await conversation.commit()

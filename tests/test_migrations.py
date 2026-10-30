@@ -28,7 +28,15 @@ def test_baseline_creates_schema_on_empty_database(tmp_path: Path) -> None:
             for row in connection.execute("SELECT name FROM sqlite_master WHERE type='table'")
         }
         history_columns = {row[1] for row in connection.execute("PRAGMA table_info(chat_history)")}
-    assert {"user", "app", "chat_history", "model_call_log", "alembic_version"} <= tables
+    expected_tables = {
+        "user",
+        "app",
+        "chat_history",
+        "model_call_log",
+        "app_memory",
+        "alembic_version",
+    }
+    assert expected_tables <= tables
     with sqlite3.connect(database_path) as connection:
         model_log_columns = {
             row[1] for row in connection.execute("PRAGMA table_info(model_call_log)")

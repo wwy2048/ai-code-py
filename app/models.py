@@ -10,6 +10,7 @@ from sqlalchemy import (
     SmallInteger,
     String,
     Text,
+    UniqueConstraint,
     func,
     text,
 )
@@ -149,4 +150,25 @@ class ModelCallLog(Base):
     )
     create_time: Mapped[datetime] = mapped_column(
         "createTime", DateTime, nullable=False, server_default=func.now()
+    )
+
+
+class AppMemory(Base):
+    """按 App 隔离的持久记忆。"""
+
+    __tablename__ = "app_memory"
+    __table_args__ = (UniqueConstraint("appId", "source_turn_id", name="uq_app_memory_turn"),)
+
+    id: Mapped[int] = mapped_column(
+        BigInteger().with_variant(Integer, "sqlite"), primary_key=True, autoincrement=True
+    )
+    app_id: Mapped[int] = mapped_column("appId", BigInteger, nullable=False, index=True)
+    user_id: Mapped[int] = mapped_column("userId", BigInteger, nullable=False)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    source_turn_id: Mapped[str] = mapped_column("source_turn_id", String(64), nullable=False)
+    create_time: Mapped[datetime] = mapped_column(
+        "createTime", DateTime, nullable=False, server_default=func.now()
+    )
+    update_time: Mapped[datetime] = mapped_column(
+        "updateTime", DateTime, nullable=False, server_default=func.now()
     )

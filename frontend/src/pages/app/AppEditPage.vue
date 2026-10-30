@@ -112,6 +112,17 @@
           </a-descriptions-item>
         </a-descriptions>
       </a-card>
+      <a-card v-if="appInfo?.id && !isAdmin" title="持久记忆" style="margin-top: 24px">
+        <a-space>
+          <a-button @click="loadMemory">刷新记忆</a-button>
+          <a-button danger @click="clearMemory">清空记忆</a-button>
+        </a-space>
+        <a-list :data-source="memories" style="margin-top: 16px">
+          <template #renderItem="{ item }">
+            <a-list-item>{{ item.content }}</a-list-item>
+          </template>
+        </a-list>
+      </a-card>
     </div>
   </div>
 </template>
@@ -129,6 +140,7 @@ import {
 } from '@/api/appController'
 import { formatCodeGenType } from '@/utils/codeGenTypes'
 import { getDeployUrl } from '@/config/env'
+import request from '@/request'
 import { openExternalUrl } from '@/utils/openExternal'
 import { formatTime } from '@/utils/time'
 import UserInfo from '@/components/UserInfo.vue'
@@ -153,6 +165,7 @@ const formData = reactive({
   codeGenType: '',
   deployKey: '',
 })
+const memories = ref<API.AppMemory[]>([])
 
 // 是否为管理员
 const isAdmin = computed(() => {
@@ -273,6 +286,23 @@ const goToChat = () => {
 const openPreview = () => {
   if (appInfo.value?.deployKey) {
     openExternalUrl(getDeployUrl(appInfo.value.deployKey))
+  }
+}
+
+const loadMemory = async () => {
+  if (!appInfo.value?.id) return
+  const response = await request.get<API.BaseResponseAppMemoryList>(
+    `/app/${appInfo.value.id}/memory`
+  )
+  memories.value = response.data.data?.records || []
+}
+
+const clearMemory = async () => {
+  if (!appInfo.value?.id) return
+  const response = await request.delete(`/app/${appInfo.value.id}/memory`)
+  if (response.data.code === 0) {
+    memories.value = []
+    message.success('记忆已清空')
   }
 }
 

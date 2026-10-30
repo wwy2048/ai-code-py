@@ -45,6 +45,26 @@ declare namespace API {
     user?: UserVO
   }
 
+  type AppMemory = {
+    id?: number
+    content?: string
+    sourceTurnId?: string
+    createTime?: string
+    updateTime?: string
+  }
+
+  type AppMemoryList = {
+    enabled?: boolean
+    maxChars?: number
+    records?: AppMemory[]
+  }
+
+  type BaseResponseAppMemoryList = {
+    code?: number
+    data?: AppMemoryList
+    message?: string
+  }
+
   type BaseResponseAppVO = {
     code?: number
     data?: AppVO

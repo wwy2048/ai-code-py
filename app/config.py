@@ -41,6 +41,9 @@ class Settings(BaseSettings):
     screenshot_wait_after_load_seconds: float = 1.0
     cover_shutdown_timeout_seconds: float = 10.0
 
+    app_memory_enabled: bool = False
+    app_memory_max_chars: int = 4000
+
     cos_secret_id: str | None = None
     cos_secret_key: str | None = None
     cos_region: str | None = None

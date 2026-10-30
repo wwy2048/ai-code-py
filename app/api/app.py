@@ -13,6 +13,7 @@ from app.deps import AdminUser, CurrentUser, DbSession
 from app.download import WorkspaceArchiveError, build_workspace_zip
 from app.errors import BusinessError
 from app.response import success
+from app.runtime.memory import MemoryStore
 from app.schemas import (
     AppAdminUpdateRequest,
     AppCreateRequest,
@@ -178,6 +179,48 @@ async def download_app_code(
         media_type="application/zip",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
+
+
+@router.get("/{app_id}/memory")
+async def list_app_memory(
+    app_id: int,
+    request: Request,
+    session: DbSession,
+    current_user: CurrentUser,
+) -> dict:
+    await require_owned_app(session, app_id, current_user.id)
+    settings = request.app.state.settings
+    store = MemoryStore(
+        session,
+        app_id=app_id,
+        user_id=current_user.id,
+        max_chars=settings.app_memory_max_chars,
+    )
+    records = await store.list_records()
+    return success(
+        {
+            "enabled": settings.app_memory_enabled,
+            "maxChars": settings.app_memory_max_chars,
+            "records": [MemoryStore.serialize(record) for record in records],
+        }
+    )
+
+
+@router.delete("/{app_id}/memory")
+async def clear_app_memory(
+    app_id: int,
+    request: Request,
+    session: DbSession,
+    current_user: CurrentUser,
+) -> dict:
+    await require_owned_app(session, app_id, current_user.id)
+    await MemoryStore(
+        session,
+        app_id=app_id,
+        user_id=current_user.id,
+        max_chars=request.app.state.settings.app_memory_max_chars,
+    ).clear()
+    return success(True)
 
 
 @router.post("/my/list/page/vo")

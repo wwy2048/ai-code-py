@@ -11,7 +11,7 @@ from sqlalchemy.sql.elements import ColumnElement
 from app.app_assets import AppAssetCleaner
 from app.codegen_router import CodeGenTypeRouter
 from app.errors import BusinessError
-from app.models import App, ChatHistory, ModelCallLog, User
+from app.models import App, AppMemory, ChatHistory, ModelCallLog, User
 from app.response import ErrorCode
 from app.schemas import (
     AppAdminUpdateRequest,
@@ -198,6 +198,7 @@ async def _delete_app_record(
 ) -> None:
     app_id = app.id
     await session.execute(delete(ChatHistory).where(ChatHistory.app_id == app_id))
+    await session.execute(delete(AppMemory).where(AppMemory.app_id == app_id))
     await session.execute(delete(ModelCallLog).where(ModelCallLog.app_id == app_id))
     await session.delete(app)
     await session.commit()
