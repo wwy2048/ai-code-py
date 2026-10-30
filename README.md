@@ -18,7 +18,14 @@ Python 全量重写 ai-code 的后端与 Agent Runtime。
 - App 创建、分页查询、详情、改名和删除清理
 - 根据初始需求路由 HTML / MULTI_FILE / VUE_PROJECT
 - 旧 App 通过 `/api/static/{codeGenType}_{appId}/` 预览
-- 脚本化 HTML Agent 工具循环、结构化 POST SSE、requestId 去重与断线续传
+- 真实 DeepSeek HTML Agent 流式工具循环、结构化 POST SSE、requestId 去重与断线续传
+- 模型调用耗时、token、状态与脱敏错误摘要记录
 - `chat_history` 保存 user / assistant / tool 运行时消息，并区分 visible / active
 
-未配置 `ANTHROPIC_API_KEY` 时，类型路由会安全回退为 HTML，应用仍可正常启动。
+未配置 `ANTHROPIC_API_KEY` 时，类型路由会安全回退为 HTML，应用仍可正常启动，但生成请求会返回可读失败。
+
+真实模型冒烟：
+
+```bash
+ANTHROPIC_API_KEY=... uv run python scripts/smoke_html_generation.py
+```

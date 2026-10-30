@@ -91,7 +91,7 @@ class ToolRegistry:
         try:
             output, size_bytes = handler(call.arguments)
             ok = True
-        except (ValueError, OSError) as exc:
+        except (KeyError, TypeError, ValueError, OSError) as exc:
             output = f'工具执行失败: {exc}'
             ok = False
         duration_ms = int((perf_counter() - started) * 1000)

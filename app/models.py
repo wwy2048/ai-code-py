@@ -119,3 +119,32 @@ class ChatHistory(Base):
         'is_error', Boolean, nullable=False, server_default=text('0')
     )
     compacted_by: Mapped[int | None] = mapped_column('compacted_by', BigInteger)
+
+
+class ModelCallLog(Base):
+    """仅记录模型调用元数据，不保存提示词、工具正文或密钥。"""
+
+    __tablename__ = 'model_call_log'
+
+    id: Mapped[int] = mapped_column(
+        BigInteger().with_variant(Integer, 'sqlite'), primary_key=True, autoincrement=True
+    )
+    app_id: Mapped[int] = mapped_column('appId', BigInteger, nullable=False)
+    turn_id: Mapped[str] = mapped_column('turn_id', String(64), nullable=False)
+    model_name: Mapped[str] = mapped_column('model_name', String(128), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False)
+    duration_ms: Mapped[int] = mapped_column('duration_ms', Integer, nullable=False)
+    input_tokens: Mapped[int] = mapped_column(
+        'input_tokens', Integer, nullable=False, server_default=text('0')
+    )
+    output_tokens: Mapped[int] = mapped_column(
+        'output_tokens', Integer, nullable=False, server_default=text('0')
+    )
+    error_type: Mapped[str | None] = mapped_column('error_type', String(128))
+    error_summary: Mapped[str | None] = mapped_column('error_summary', String(256))
+    retry_count: Mapped[int] = mapped_column(
+        'retry_count', Integer, nullable=False, server_default=text('0')
+    )
+    create_time: Mapped[datetime] = mapped_column(
+        'createTime', DateTime, nullable=False, server_default=func.now()
+    )

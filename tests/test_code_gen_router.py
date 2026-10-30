@@ -88,5 +88,5 @@ async def test_anthropic_route_model_parses_tool_use_response() -> None:
 
     assert result == 'VUE_PROJECT'
     assert client.messages.request is not None
-    assert client.messages.request['tool_choice']['name'] == 'select_code_gen_type'
+    assert 'tool_choice' not in client.messages.request
     await model.aclose()

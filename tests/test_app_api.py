@@ -8,7 +8,7 @@ from sqlalchemy import select
 
 from app.app_assets import LocalAppAssetCleaner
 from app.codegen_router import CodeGenType, ModelBackedCodeGenTypeRouter
-from app.models import App, ChatHistory
+from app.models import App, ChatHistory, ModelCallLog
 
 
 async def _register_and_login(
@@ -192,6 +192,15 @@ async def test_delete_app_removes_database_rows_and_artifacts(
                 is_delete=0,
             )
         )
+        session.add(
+            ModelCallLog(
+                app_id=app_id,
+                turn_id='delete-turn',
+                model_name='test',
+                status='success',
+                duration_ms=1,
+            )
+        )
         await session.commit()
 
     deleted = await app_context.client.request(
@@ -210,6 +219,10 @@ async def test_delete_app_removes_database_rows_and_artifacts(
             select(ChatHistory).where(ChatHistory.app_id == app_id)
         )
         assert remaining_chat is None
+        remaining_logs = await session.scalar(
+            select(ModelCallLog).where(ModelCallLog.app_id == app_id)
+        )
+        assert remaining_logs is None
 
 
 async def test_creating_app_requires_login(app_context: AppContext) -> None:

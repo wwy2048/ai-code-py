@@ -15,6 +15,7 @@ from app.config import Settings
 from app.db import Base
 from app.db import create_engine as create_db_engine
 from app.main import create_app
+from app.runtime.model import ScriptedHtmlModel
 
 
 class StaticCodeGenTypeRouter:
@@ -62,6 +63,7 @@ async def app_context(tmp_path: Path) -> AsyncIterator[AppContext]:
         engine=engine,
         redis_client=redis_client,
         code_gen_type_router=StaticCodeGenTypeRouter(),
+        agent_model=ScriptedHtmlModel(),
     )
     session_factory = app.state.session_factory
 

@@ -26,8 +26,9 @@ from app.errors import (
     handle_validation_error,
 )
 from app.runtime.agent import AgentTurnExecutor
+from app.runtime.anthropic_model import AnthropicHtmlModel
 from app.runtime.manager import GenerationManager
-from app.runtime.model import AgentModel, ScriptedHtmlModel
+from app.runtime.model import AgentModel, UnavailableAgentModel
 
 
 def create_app(
@@ -63,7 +64,12 @@ def create_app(
     turn_executor = AgentTurnExecutor(
         app.state.session_factory,
         Path(app_settings.workspace_root),
-        agent_model or ScriptedHtmlModel(),
+        agent_model
+        or (
+            AnthropicHtmlModel(app_settings)
+            if app_settings.anthropic_api_key
+            else UnavailableAgentModel()
+        ),
     )
     app.state.generation_manager = GenerationManager(turn_executor)
 

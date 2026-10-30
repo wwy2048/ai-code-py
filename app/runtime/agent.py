@@ -1,11 +1,12 @@
 from collections.abc import Awaitable, Callable
 from pathlib import Path
+from time import perf_counter
 from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.runtime.conversation import ConversationStore
-from app.runtime.model import AgentModel, ModelReply
+from app.runtime.model import AgentModel, ModelCallStatus, ModelReply
 from app.runtime.tools import TOOL_DEFINITIONS, ToolRegistry
 from app.runtime.workspace import Workspace
 
@@ -51,10 +52,43 @@ class AgentTurnExecutor:
             assistant_parts: list[str] = []
 
             for _ in range(8):
-                reply: ModelReply = await self._model.next_turn(
-                    [{**message, 'tools': TOOL_DEFINITIONS} for message in messages]
+                streamed_parts: list[str] = []
+
+                async def on_text(
+                    delta: str,
+                    parts: list[str] = streamed_parts,
+                ) -> None:
+                    parts.append(delta)
+                    assistant_parts.append(delta)
+                    await emit('text_delta', {'text': delta})
+
+                started = perf_counter()
+                try:
+                    reply: ModelReply = await self._model.next_turn(
+                        [{**message, 'tools': TOOL_DEFINITIONS} for message in messages],
+                        on_text,
+                    )
+                except Exception as exc:
+                    await conversation.append_model_call(
+                        status=ModelCallStatus.ERROR,
+                        model_name=getattr(self._model, 'model_name', 'unknown'),
+                        duration_ms=int((perf_counter() - started) * 1000),
+                        error_type=type(exc).__name__,
+                        error_summary=str(getattr(exc, 'summary', type(exc).__name__))[:256],
+                        retry_count=int(getattr(exc, 'retry_count', 0)),
+                    )
+                    await conversation.commit()
+                    raise
+                await conversation.append_model_call(
+                    status=ModelCallStatus.SUCCESS,
+                    model_name=reply.model_name or getattr(self._model, 'model_name', 'unknown'),
+                    duration_ms=int((perf_counter() - started) * 1000),
+                    input_tokens=reply.input_tokens,
+                    output_tokens=reply.output_tokens,
+                    retry_count=reply.retry_count,
                 )
-                if reply.text:
+                await conversation.commit()
+                if reply.text and not streamed_parts:
                     assistant_parts.append(reply.text)
                     await emit('text_delta', {'text': reply.text})
                 if not reply.tool_calls:

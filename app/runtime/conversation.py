@@ -5,8 +5,8 @@ from typing import Any
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import ChatHistory
-from app.runtime.model import ToolCall
+from app.models import ChatHistory, ModelCallLog
+from app.runtime.model import ModelCallStatus, ToolCall
 from app.runtime.tools import ToolExecutionResult
 
 
@@ -95,6 +95,33 @@ class ConversationStore:
                 'sizeBytes': result.size_bytes,
             },
             is_error=not result.ok,
+        )
+
+    async def append_model_call(
+        self,
+        *,
+        status: ModelCallStatus,
+        model_name: str,
+        duration_ms: int,
+        input_tokens: int = 0,
+        output_tokens: int = 0,
+        error_type: str | None = None,
+        error_summary: str | None = None,
+        retry_count: int = 0,
+    ) -> None:
+        self._session.add(
+            ModelCallLog(
+                app_id=self._app_id,
+                turn_id=self._turn_id,
+                model_name=model_name,
+                status=status.value,
+                duration_ms=duration_ms,
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+                error_type=error_type,
+                error_summary=error_summary,
+                retry_count=retry_count,
+            )
         )
 
     async def commit(self) -> None:

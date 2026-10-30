@@ -25,6 +25,9 @@ class Settings(BaseSettings):
     anthropic_base_url: str = 'https://api.deepseek.com/anthropic'
     anthropic_model: str = 'deepseek-flash'
     anthropic_timeout_seconds: float = 30.0
+    anthropic_max_tokens: int = 8000
+    model_retry_base_seconds: float = 0.5
+    model_max_retries: int = 3
 
     workspace_root: str = 'tmp/codeOutput'
     deploy_root: str = 'tmp/code_deploy'

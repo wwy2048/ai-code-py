@@ -61,14 +61,17 @@ class AnthropicCodeGenTypeRouteModel:
                     },
                 }
             ],
-            tool_choice={'type': 'tool', 'name': 'select_code_gen_type'},
         )
+        text_parts: list[str] = []
         for block in response.content:
-            if getattr(block, 'type', None) == 'tool_use':
+            block_type = getattr(block, 'type', None)
+            if block_type == 'tool_use':
                 payload: Any = getattr(block, 'input', {})
-                if isinstance(payload, dict):
-                    return str(payload.get('codeGenType', ''))
-        return ''
+                if isinstance(payload, dict) and payload.get('codeGenType'):
+                    return str(payload['codeGenType'])
+            elif block_type == 'text':
+                text_parts.append(str(getattr(block, 'text', '')))
+        return ''.join(text_parts).strip()
 
     async def aclose(self) -> None:
         await self._client.close()

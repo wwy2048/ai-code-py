@@ -1,14 +1,15 @@
 import asyncio
 import json
 from pathlib import Path
+from typing import Any
 
 from conftest import AppContext
 from sqlalchemy import func, select
 
-from app.models import ChatHistory
+from app.models import ChatHistory, ModelCallLog
 from app.runtime.agent import AgentTurnExecutor
 from app.runtime.manager import GenerationManager
-from app.runtime.model import ModelReply, ToolCall
+from app.runtime.model import ModelReply, TextEmitter, ToolCall, UnavailableAgentModel
 
 
 def _parse_sse(body: str) -> list[dict]:
@@ -101,6 +102,17 @@ async def test_html_generation_runs_tool_loop_streams_events_and_persists_sessio
     assert all(sequence is not None for sequence in sequences)
     assert sequences == sorted(sequence for sequence in sequences if sequence is not None)
     assert all(row.user_id == user_id for row in rows)
+
+    async with app_context.session_factory() as session:
+        model_logs = (
+            await session.scalars(
+                select(ModelCallLog).where(ModelCallLog.app_id == app_id)
+            )
+        ).all()
+    assert len(model_logs) == 2
+    assert all(log.status == 'success' for log in model_logs)
+    assert all(log.duration_ms >= 0 for log in model_logs)
+    assert all(log.retry_count == 0 for log in model_logs)
 
     visible_history = await app_context.client.get(f'/api/chatHistory/app/{app_id}')
     visible_records = visible_history.json()['data']['records']
@@ -200,9 +212,11 @@ async def test_generation_continues_without_an_active_subscriber(
 
 
 class PathEscapeModel:
-    async def next_turn(self, messages: list[dict]) -> ModelReply:
+    async def next_turn(self, messages: list[dict[str, Any]], on_text: TextEmitter) -> ModelReply:
         if any(message.get('role') == 'tool_result' for message in messages):
+            await on_text('越界工具已处理。')
             return ModelReply(text='越界工具已处理。')
+        await on_text('尝试越界写入。')
         return ModelReply(
             text='尝试越界写入。',
             tool_calls=[
@@ -244,7 +258,7 @@ async def test_path_escape_is_reported_as_failed_tool_without_writing(
 
 
 class FailingModel:
-    async def next_turn(self, messages: list[dict]) -> ModelReply:
+    async def next_turn(self, messages: list[dict[str, Any]], on_text: TextEmitter) -> ModelReply:
         raise RuntimeError('包含内部细节的模型错误')
 
 
@@ -272,3 +286,100 @@ async def test_model_failure_emits_error_then_failed_turn_without_leaking_detail
     assert [event['event'] for event in events[-2:]] == ['error', 'turn_finished']
     assert events[-1]['data']['status'] == 'failed'
     assert '内部细节' not in response.text
+    async with app_context.session_factory() as session:
+        failed_log = await session.scalar(
+            select(ModelCallLog).where(ModelCallLog.turn_id == 'turn-error')
+        )
+    assert failed_log is not None
+    assert failed_log.status == 'error'
+    assert failed_log.error_type == 'RuntimeError'
+    assert failed_log.error_summary == 'RuntimeError'
+    assert failed_log.retry_count == 0
+
+
+class RecoveringToolModel:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def next_turn(
+        self,
+        messages: list[dict[str, Any]],
+        on_text: TextEmitter,
+    ) -> ModelReply:
+        self.calls += 1
+        if self.calls == 1:
+            await on_text('第一次工具参数有误。')
+            return ModelReply(
+                text='第一次工具参数有误。',
+                tool_calls=[
+                    ToolCall(id='bad-tool', name='write_file', arguments={'path': 'index.html'})
+                ],
+            )
+        tool_result = next(
+            message for message in reversed(messages) if message.get('role') == 'tool_result'
+        )
+        assert tool_result['is_error'] is True
+        await on_text('已收到错误并修正。')
+        return ModelReply(
+            text='已收到错误并修正。',
+            tool_calls=[
+                ToolCall(
+                    id='good-tool',
+                    name='write_file',
+                    arguments={'path': 'index.html', 'content': '<h1>fixed</h1>'},
+                )
+            ],
+        )
+
+
+async def test_tool_argument_error_is_returned_to_model_and_recovered(
+    app_context: AppContext,
+) -> None:
+    user_id, app_id = await _register_login_and_create_app(app_context)
+    executor = AgentTurnExecutor(
+        app_context.session_factory,
+        Path(app_context.app.state.settings.workspace_root),
+        RecoveringToolModel(),
+    )
+    app_context.app.state.generation_manager = GenerationManager(executor)
+
+    response = await app_context.client.post(
+        '/api/app/chat/gen/code',
+        json={
+            'appId': app_id,
+            'message': '测试工具参数修复',
+            'requestId': 'turn-tool-recovery',
+        },
+    )
+    events = _parse_sse(response.text)
+    finished = [event for event in events if event['event'] == 'tool_finished']
+
+    assert [event['data']['status'] for event in finished] == ['failed', 'completed']
+    workspace = Path(app_context.app.state.settings.workspace_root) / f'html_{app_id}'
+    assert (workspace / 'index.html').read_text(encoding='utf-8') == '<h1>fixed</h1>'
+
+
+async def test_unavailable_model_returns_readable_failed_turn(
+    app_context: AppContext,
+) -> None:
+    user_id, app_id = await _register_login_and_create_app(app_context)
+    executor = AgentTurnExecutor(
+        app_context.session_factory,
+        Path(app_context.app.state.settings.workspace_root),
+        UnavailableAgentModel(),
+    )
+    app_context.app.state.generation_manager = GenerationManager(executor)
+
+    response = await app_context.client.post(
+        '/api/app/chat/gen/code',
+        json={
+            'appId': app_id,
+            'message': '缺少模型密钥',
+            'requestId': 'turn-no-key',
+        },
+    )
+    events = _parse_sse(response.text)
+
+    assert [event['event'] for event in events[-2:]] == ['error', 'turn_finished']
+    assert events[-1]['data']['status'] == 'failed'
+    assert 'ANTHROPIC_API_KEY' not in response.text

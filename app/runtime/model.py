@@ -1,4 +1,6 @@
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
+from enum import StrEnum
 from typing import Any, Protocol
 
 
@@ -9,23 +11,52 @@ class ToolCall:
     arguments: dict[str, Any]
 
 
+TextEmitter = Callable[[str], Awaitable[None]]
+
+
 @dataclass(frozen=True)
 class ModelReply:
     text: str = ''
     tool_calls: list[ToolCall] = field(default_factory=list)
+    input_tokens: int = 0
+    output_tokens: int = 0
+    model_name: str = ''
+    retry_count: int = 0
+
+
+class ModelCallStatus(StrEnum):
+    SUCCESS = 'success'
+    ERROR = 'error'
+
+
+class ModelCallError(RuntimeError):
+    def __init__(self, summary: str, retry_count: int) -> None:
+        super().__init__(summary)
+        self.summary = summary
+        self.retry_count = retry_count
 
 
 class AgentModel(Protocol):
-    async def next_turn(self, messages: list[dict[str, Any]]) -> ModelReply: ...
+    async def next_turn(
+        self,
+        messages: list[dict[str, Any]],
+        on_text: TextEmitter,
+    ) -> ModelReply: ...
 
 
 class ScriptedHtmlModel:
     """Ticket 03 使用的确定性模型，产出单页 HTML。"""
 
-    async def next_turn(self, messages: list[dict[str, Any]]) -> ModelReply:
+    async def next_turn(
+        self,
+        messages: list[dict[str, Any]],
+        on_text: TextEmitter,
+    ) -> ModelReply:
         has_tool_result = any(message.get('role') == 'tool_result' for message in messages)
         if has_tool_result:
-            return ModelReply(text='页面已生成，可以直接在右侧预览。')
+            text = '页面已生成，可以直接在右侧预览。'
+            await on_text(text)
+            return ModelReply(text=text)
 
         prompt = str(messages[0].get('content', ''))
         escaped_prompt = (
@@ -56,8 +87,10 @@ class ScriptedHtmlModel:
   </main>
 </body>
 </html>'''
+        text = '我将创建 index.html。'
+        await on_text(text)
         return ModelReply(
-            text='我将创建 index.html。',
+            text=text,
             tool_calls=[
                 ToolCall(
                     id='tool-write-index',
@@ -66,3 +99,16 @@ class ScriptedHtmlModel:
                 )
             ],
         )
+
+
+class UnavailableAgentModel:
+    """未配置模型密钥时给出可读失败，而不是静默伪造生成结果。"""
+
+    model_name = 'unavailable'
+
+    async def next_turn(
+        self,
+        messages: list[dict[str, Any]],
+        on_text: TextEmitter,
+    ) -> ModelReply:
+        raise RuntimeError('未配置 ANTHROPIC_API_KEY，无法调用生成模型')

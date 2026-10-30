@@ -2,6 +2,8 @@ from pathlib import Path
 
 import pytest
 
+from app.runtime.model import ToolCall
+from app.runtime.tools import ToolRegistry
 from app.runtime.workspace import Workspace
 
 
@@ -45,3 +47,16 @@ def test_workspace_rejects_glob_escape(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError):
         workspace.glob('../*')
+
+
+async def test_tool_registry_returns_readable_failure_for_missing_arguments(
+    tmp_path: Path,
+) -> None:
+    registry = ToolRegistry(Workspace(tmp_path))
+
+    result = await registry.execute(
+        ToolCall(id='bad-call', name='write_file', arguments={'path': 'index.html'})
+    )
+
+    assert result.ok is False
+    assert '工具执行失败' in result.output
