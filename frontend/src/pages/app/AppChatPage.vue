@@ -43,7 +43,7 @@
       <!-- 左侧对话区域 -->
       <div class="chat-section">
         <!-- 消息区域 -->
-        <div class="messages-container" ref="messagesContainer">
+        <div class="messages-container" ref="messagesContainer" @scroll="handleHistoryScroll">
           <!-- 加载更多按钮 -->
           <div v-if="hasMoreHistory" class="load-more-container">
             <a-button
@@ -223,6 +223,7 @@ const hasInitialConversation = ref(false) // 标记是否已经进行过初始�
 const chatHistory = ref<API.ChatHistory[]>([])
 const hasMoreHistory = ref(true)
 const lastCreateTime = ref<string | undefined>()
+const lastId = ref<number | undefined>()
 const loadingHistory = ref(false)
 
 // 预览相关
@@ -255,11 +256,16 @@ const showAppDetail = () => {
 const fetchChatHistory = async () => {
   if (!appId.value) return
 
+  const container = messagesContainer.value
+  const preserveScroll = lastCreateTime.value !== undefined && container !== undefined
+  const previousScrollHeight = container?.scrollHeight ?? 0
+  const previousScrollTop = container?.scrollTop ?? 0
   loadingHistory.value = true
   try {
     const res = await listAppChatHistory({
       appId: parseInt(appId.value),
       lastCreateTime: lastCreateTime.value,
+      lastId: lastId.value,
     })
 
     if (res.data.code === 0 && res.data.data) {
@@ -279,6 +285,7 @@ const fetchChatHistory = async () => {
       // 更新最后一条消息的创建时间，用于下一次分页查询
       // 由于records已经反转，records[0]是最早的消息，records[records.length - 1]是最新的消息
       lastCreateTime.value = records[0].createTime
+      lastId.value = records[0].id
 
       // 将对话历史转换为消息格式
       const historyMessages: Message[] = records.map((record) => ({
@@ -291,6 +298,11 @@ const fetchChatHistory = async () => {
       // 将历史消息添加到消息列表的开头
       messages.value = [...historyMessages, ...messages.value]
 
+      if (preserveScroll && container) {
+        await nextTick()
+        container.scrollTop = container.scrollHeight - previousScrollHeight + previousScrollTop
+      }
+
       // 如果没有更多历史消息，更新标志
       if (records.length < 10) {
         hasMoreHistory.value = false
@@ -301,6 +313,15 @@ const fetchChatHistory = async () => {
     message.error('获取对话历史失败')
   } finally {
     loadingHistory.value = false
+  }
+}
+
+// 滚动到顶部时自动加载更早的对话历史
+const handleHistoryScroll = () => {
+  const container = messagesContainer.value
+  if (!container || !hasMoreHistory.value || loadingHistory.value) return
+  if (container.scrollTop <= 40) {
+    void fetchChatHistory()
   }
 }
 

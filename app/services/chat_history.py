@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import func, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.errors import BusinessError
@@ -34,6 +34,7 @@ async def list_visible_history(
     user_id: int,
     page_size: int,
     last_create_time: datetime | None,
+    last_id: int | None,
 ) -> dict:
     await require_owned_app(session, app_id, user_id)
     if page_size < 1 or page_size > 20:
@@ -44,8 +45,21 @@ async def list_visible_history(
         ChatHistory.is_delete == 0,
         ChatHistory.visible.is_(True),
     ]
+    if last_id is not None and last_create_time is None:
+        raise BusinessError(ErrorCode.PARAMS_ERROR, "lastId 必须与 lastCreateTime 同时使用")
     if last_create_time is not None:
-        conditions.append(ChatHistory.create_time < last_create_time)
+        if last_id is None:
+            conditions.append(ChatHistory.create_time < last_create_time)
+        else:
+            conditions.append(
+                or_(
+                    ChatHistory.create_time < last_create_time,
+                    and_(
+                        ChatHistory.create_time == last_create_time,
+                        ChatHistory.id < last_id,
+                    ),
+                )
+            )
     total = await session.scalar(select(func.count(ChatHistory.id)).where(*conditions)) or 0
     records = (
         await session.scalars(

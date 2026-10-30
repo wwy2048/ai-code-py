@@ -466,8 +466,12 @@ class MultiFileEditModel:
         messages: list[dict[str, Any]],
         on_text: TextEmitter,
     ) -> ModelReply:
-        has_tool_result = any(message.get("role") == "tool_result" for message in messages)
-        prompt = str(messages[0].get("content", ""))
+        has_tool_result = messages[-1].get("role") == "tool_result"
+        prompt = next(
+            str(message.get("content", ""))
+            for message in reversed(messages)
+            if message.get("role") == "user"
+        )
         if has_tool_result:
             await on_text("处理完成。")
             return ModelReply(text="处理完成。")

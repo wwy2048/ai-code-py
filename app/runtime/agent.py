@@ -7,6 +7,11 @@ from typing import Any
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.runtime.conversation import ConversationStore
+from app.runtime.messages import (
+    assistant_tool_calls_message,
+    tool_result_message,
+    tool_use_block,
+)
 from app.runtime.model import AgentModel, ModelCallStatus, ModelReply
 from app.runtime.tools import ToolRegistry
 from app.runtime.vue_project import VueProjectBuilder, VueProjectTemplate
@@ -54,6 +59,7 @@ class AgentTurnExecutor:
                 user_id=user_id,
                 turn_id=turn_id,
             )
+            history = await conversation.load_active_model_messages()
             await conversation.append_user(prompt)
             await conversation.commit()
 
@@ -84,11 +90,18 @@ class AgentTurnExecutor:
                 extra_tools,
                 extra_handlers,
             )
-            messages: list[dict[str, Any]] = [{"role": "user", "content": prompt}]
+            messages: list[dict[str, Any]] = [
+                *history,
+                {"role": "user", "content": prompt},
+            ]
             assistant_parts: list[str] = []
+            model_round = 0
 
             async def run_model_rounds() -> None:
+                nonlocal model_round
                 for _ in range(12):
+                    model_round += 1
+                    batch_id = f"{turn_id}:{model_round}"
                     streamed_parts: list[str] = []
 
                     async def on_text(delta: str, parts: list[str] = streamed_parts) -> None:
@@ -138,17 +151,24 @@ class AgentTurnExecutor:
                             },
                         )
                         result = await registry.execute(call)
-                        await conversation.append_tool_call(call)
-                        await conversation.append_tool_result(call, result)
+                        await conversation.append_tool_call(
+                            call,
+                            batch_id=batch_id,
+                            assistant_text=reply.text,
+                        )
+                        await conversation.append_tool_result(
+                            call,
+                            result,
+                            batch_id=batch_id,
+                        )
                         await conversation.commit()
                         current_results.append(
-                            {
-                                "role": "tool_result",
-                                "tool_call_id": call.id,
-                                "name": call.name,
-                                "content": result.output,
-                                "is_error": not result.ok,
-                            }
+                            tool_result_message(
+                                tool_call_id=call.id,
+                                name=call.name,
+                                content=result.output,
+                                is_error=not result.ok,
+                            )
                         )
                         await emit(
                             "tool_finished",
@@ -163,14 +183,17 @@ class AgentTurnExecutor:
                             },
                         )
                     messages.append(
-                        {
-                            "role": "assistant",
-                            "content": reply.text,
-                            "tool_calls": [
-                                {"id": c.id, "name": c.name, "arguments": c.arguments}
+                        assistant_tool_calls_message(
+                            [
+                                tool_use_block(
+                                    tool_call_id=c.id,
+                                    name=c.name,
+                                    arguments=c.arguments,
+                                )
                                 for c in reply.tool_calls
                             ],
-                        }
+                            content=reply.text,
+                        )
                     )
                     messages.extend(current_results)
 

@@ -6,6 +6,11 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import ChatHistory, ModelCallLog
+from app.runtime.messages import (
+    assistant_tool_calls_message,
+    tool_result_message,
+    tool_use_block,
+)
 from app.runtime.model import ModelCallStatus, ToolCall
 from app.runtime.tools import ToolExecutionResult
 
@@ -59,6 +64,25 @@ class ConversationStore:
             visible=True,
         )
 
+    async def load_active_model_messages(self) -> list[dict[str, Any]]:
+        """加载当前 App 仍生效的运行时消息，并投影为模型协议消息。"""
+        records = (
+            await self._session.scalars(
+                select(ChatHistory)
+                .where(
+                    ChatHistory.app_id == self._app_id,
+                    ChatHistory.is_delete == 0,
+                    ChatHistory.active.is_(True),
+                )
+                .order_by(
+                    ChatHistory.sequence.asc(),
+                    ChatHistory.create_time.asc(),
+                    ChatHistory.id.asc(),
+                )
+            )
+        ).all()
+        return _project_model_messages(list(records))
+
     async def append_assistant(self, message: str) -> None:
         await self._append(
             message=message,
@@ -67,7 +91,13 @@ class ConversationStore:
             visible=True,
         )
 
-    async def append_tool_call(self, call: ToolCall) -> None:
+    async def append_tool_call(
+        self,
+        call: ToolCall,
+        *,
+        batch_id: str,
+        assistant_text: str,
+    ) -> None:
         await self._append(
             message=json.dumps(call.arguments, ensure_ascii=False),
             message_type=MessageType.TOOL,
@@ -75,10 +105,20 @@ class ConversationStore:
             visible=False,
             tool_call_id=call.id,
             tool_name=call.name,
-            payload={"arguments": call.arguments},
+            payload={
+                "arguments": call.arguments,
+                "batchId": batch_id,
+                "assistantText": assistant_text,
+            },
         )
 
-    async def append_tool_result(self, call: ToolCall, result: ToolExecutionResult) -> None:
+    async def append_tool_result(
+        self,
+        call: ToolCall,
+        result: ToolExecutionResult,
+        *,
+        batch_id: str,
+    ) -> None:
         await self._append(
             message=result.output,
             message_type=MessageType.TOOL,
@@ -91,6 +131,7 @@ class ConversationStore:
                 "input": result.public_input,
                 "durationMs": result.duration_ms,
                 "sizeBytes": result.size_bytes,
+                "batchId": batch_id,
             },
             is_error=not result.ok,
         )
@@ -155,3 +196,86 @@ class ConversationStore:
                 is_delete=0,
             )
         )
+
+
+def _project_model_messages(records: list[ChatHistory]) -> list[dict[str, Any]]:
+    """保持工具调用与结果成对，并丢弃无法安全回放的不完整消息。"""
+    pending_calls: dict[tuple[str | None, str | None], list[ChatHistory]] = {}
+    result_by_call: dict[int, ChatHistory] = {}
+    calls_by_batch: dict[tuple[str | None, str], list[ChatHistory]] = {}
+    batch_text: dict[tuple[str | None, str], str] = {}
+
+    for record in records:
+        key = (record.turn_id, record.tool_call_id)
+        if record.message_kind == MessageKind.TOOL_CALL and record.tool_call_id:
+            pending_calls.setdefault(key, []).append(record)
+            batch_id = (record.payload or {}).get("batchId")
+            if isinstance(batch_id, str) and batch_id:
+                indexed_batch_key = (record.turn_id, batch_id)
+                calls_by_batch.setdefault(indexed_batch_key, []).append(record)
+                assistant_text = (record.payload or {}).get("assistantText")
+                if isinstance(assistant_text, str):
+                    batch_text.setdefault(indexed_batch_key, assistant_text)
+        elif record.message_kind == MessageKind.TOOL_RESULT and record.tool_call_id:
+            calls = pending_calls.get(key)
+            if calls:
+                result_by_call[id(calls.pop())] = record
+
+    projected: list[dict[str, Any]] = []
+    emitted_batches: set[tuple[str | None, str]] = set()
+    for record in records:
+        if record.message_kind == MessageKind.TOOL_CALL:
+            batch_id = (record.payload or {}).get("batchId")
+            batch_key = (
+                (record.turn_id, batch_id) if isinstance(batch_id, str) and batch_id else None
+            )
+            if batch_key is not None and batch_key in emitted_batches:
+                continue
+            calls = calls_by_batch[batch_key] if batch_key is not None else [record]
+            completed_calls = [
+                call for call in calls if call.tool_call_id and id(call) in result_by_call
+            ]
+            if not completed_calls:
+                continue
+            if batch_key is not None:
+                emitted_batches.add(batch_key)
+            tool_calls = []
+            for call in completed_calls:
+                arguments = (call.payload or {}).get("arguments")
+                tool_calls.append(
+                    tool_use_block(
+                        tool_call_id=call.tool_call_id or "",
+                        name=call.tool_name or "",
+                        arguments=arguments if isinstance(arguments, dict) else {},
+                    )
+                )
+            projected.append(
+                assistant_tool_calls_message(
+                    tool_calls,
+                    content=batch_text.get(batch_key, "") if batch_key is not None else "",
+                )
+            )
+            for call in completed_calls:
+                result = result_by_call[id(call)]
+                projected.append(
+                    tool_result_message(
+                        tool_call_id=call.tool_call_id or "",
+                        name=call.tool_name,
+                        content=result.message,
+                        is_error=result.is_error,
+                    )
+                )
+        elif record.message_kind == MessageKind.TOOL_RESULT:
+            continue
+        elif record.message_kind == MessageKind.USER:
+            projected.append({"role": "user", "content": record.message})
+        elif record.message_kind == MessageKind.ASSISTANT:
+            projected.append({"role": "assistant", "content": record.message})
+        elif record.message_kind == MessageKind.COMPACTION:
+            projected.append({"role": "user", "content": f"[会话压缩摘要]\n{record.message}"})
+        elif record.message_kind == "legacy":
+            if record.message_type == MessageType.USER:
+                projected.append({"role": "user", "content": record.message})
+            elif record.message_type == MessageType.AI:
+                projected.append({"role": "assistant", "content": record.message})
+    return projected

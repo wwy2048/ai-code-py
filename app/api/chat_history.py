@@ -16,6 +16,7 @@ async def list_app_chat_history(
     current_user: CurrentUser,
     pageSize: int = 10,
     lastCreateTime: datetime | None = None,
+    lastId: int | None = None,
 ) -> dict:
     page = await list_visible_history(
         session,
@@ -23,5 +24,6 @@ async def list_app_chat_history(
         user_id=current_user.id,
         page_size=pageSize,
         last_create_time=lastCreateTime,
+        last_id=lastId,
     )
     return success(page)

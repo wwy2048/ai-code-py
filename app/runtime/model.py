@@ -52,13 +52,17 @@ class ScriptedHtmlModel:
         messages: list[dict[str, Any]],
         on_text: TextEmitter,
     ) -> ModelReply:
-        has_tool_result = any(message.get("role") == "tool_result" for message in messages)
+        has_tool_result = messages[-1].get("role") == "tool_result"
         if has_tool_result:
             text = "页面已生成，可以直接在右侧预览。"
             await on_text(text)
             return ModelReply(text=text)
 
-        prompt = str(messages[0].get("content", ""))
+        prompt = next(
+            str(message.get("content", ""))
+            for message in reversed(messages)
+            if message.get("role") == "user"
+        )
         escaped_prompt = (
             prompt.replace("&", "&amp;")
             .replace("<", "&lt;")
@@ -122,7 +126,7 @@ class ScriptedMultiFileModel:
         messages: list[dict[str, Any]],
         on_text: TextEmitter,
     ) -> ModelReply:
-        has_tool_result = any(message.get("role") == "tool_result" for message in messages)
+        has_tool_result = messages[-1].get("role") == "tool_result"
         if has_tool_result:
             text = "多文件页面已生成。"
             await on_text(text)

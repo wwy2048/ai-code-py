@@ -166,6 +166,7 @@ declare namespace API {
     appId: number
     pageSize?: number
     lastCreateTime?: string
+    lastId?: number
   }
 
   type LoginUserVO = {
