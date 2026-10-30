@@ -1,6 +1,18 @@
 from datetime import datetime
+from typing import Any
 
-from sqlalchemy import BigInteger, DateTime, Integer, SmallInteger, String, Text, func, text
+from sqlalchemy import (
+    JSON,
+    BigInteger,
+    Boolean,
+    DateTime,
+    Integer,
+    SmallInteger,
+    String,
+    Text,
+    func,
+    text,
+)
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db import Base
@@ -89,3 +101,21 @@ class ChatHistory(Base):
     is_delete: Mapped[int] = mapped_column(
         'isDelete', SmallInteger, nullable=False, server_default=text('0')
     )
+    turn_id: Mapped[str | None] = mapped_column('turn_id', String(64))
+    sequence: Mapped[int | None] = mapped_column('sequence', Integer)
+    message_kind: Mapped[str] = mapped_column(
+        'message_kind', String(32), nullable=False, server_default=text("'legacy'")
+    )
+    payload: Mapped[dict[str, Any] | None] = mapped_column('payload', JSON)
+    visible: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text('1')
+    )
+    active: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text('1')
+    )
+    tool_call_id: Mapped[str | None] = mapped_column('tool_call_id', String(128))
+    tool_name: Mapped[str | None] = mapped_column('tool_name', String(64))
+    is_error: Mapped[bool] = mapped_column(
+        'is_error', Boolean, nullable=False, server_default=text('0')
+    )
+    compacted_by: Mapped[int | None] = mapped_column('compacted_by', BigInteger)

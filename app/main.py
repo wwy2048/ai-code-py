@@ -11,6 +11,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.staticfiles import StaticFiles
 
 from app.api.app import router as app_router
+from app.api.chat_history import router as chat_history_router
 from app.api.health import router as health_router
 from app.api.user import router as user_router
 from app.app_assets import CosCoverCleaner, LocalAppAssetCleaner
@@ -24,6 +25,9 @@ from app.errors import (
     handle_unexpected_error,
     handle_validation_error,
 )
+from app.runtime.agent import AgentTurnExecutor
+from app.runtime.manager import GenerationManager
+from app.runtime.model import AgentModel, ScriptedHtmlModel
 
 
 def create_app(
@@ -32,6 +36,7 @@ def create_app(
     engine: AsyncEngine | None = None,
     redis_client: Redis | None = None,
     code_gen_type_router: CodeGenTypeRouter | None = None,
+    agent_model: AgentModel | None = None,
 ) -> FastAPI:
     app_settings = settings or get_settings()
     app_engine = engine or create_engine(app_settings.database_url)
@@ -55,6 +60,12 @@ def create_app(
     app.state.asset_cleaner = LocalAppAssetCleaner(
         app_settings, cover_cleaner=CosCoverCleaner(app_settings)
     )
+    turn_executor = AgentTurnExecutor(
+        app.state.session_factory,
+        Path(app_settings.workspace_root),
+        agent_model or ScriptedHtmlModel(),
+    )
+    app.state.generation_manager = GenerationManager(turn_executor)
 
     app.add_exception_handler(BusinessError, handle_business_error)
     app.add_exception_handler(StarletteHTTPException, handle_http_error)
@@ -78,4 +89,5 @@ def create_app(
     app.include_router(health_router, prefix=app_settings.api_prefix)
     app.include_router(user_router, prefix=app_settings.api_prefix)
     app.include_router(app_router, prefix=app_settings.api_prefix)
+    app.include_router(chat_history_router, prefix=app_settings.api_prefix)
     return app

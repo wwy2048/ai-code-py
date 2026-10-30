@@ -29,7 +29,22 @@ def test_baseline_creates_schema_on_empty_database(tmp_path: Path) -> None:
                 "SELECT name FROM sqlite_master WHERE type='table'"
             )
         }
+        history_columns = {
+            row[1] for row in connection.execute('PRAGMA table_info(chat_history)')
+        }
     assert {'user', 'app', 'chat_history', 'alembic_version'} <= tables
+    assert {
+        'turn_id',
+        'sequence',
+        'message_kind',
+        'payload',
+        'visible',
+        'active',
+        'tool_call_id',
+        'tool_name',
+        'is_error',
+        'compacted_by',
+    } <= history_columns
 
 
 def test_baseline_preserves_existing_tables(tmp_path: Path) -> None:
@@ -43,6 +58,9 @@ def test_baseline_preserves_existing_tables(tmp_path: Path) -> None:
 
     with sqlite3.connect(database_path) as connection:
         user_columns = {row[1] for row in connection.execute('PRAGMA table_info(user)')}
+        history_columns = {
+            row[1] for row in connection.execute('PRAGMA table_info(chat_history)')
+        }
         tables = {
             row[0]
             for row in connection.execute(
@@ -50,4 +68,5 @@ def test_baseline_preserves_existing_tables(tmp_path: Path) -> None:
             )
         }
     assert 'sentinel' in user_columns
+    assert 'turn_id' in history_columns
     assert {'user', 'app', 'chat_history', 'alembic_version'} <= tables

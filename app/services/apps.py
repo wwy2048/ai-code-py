@@ -25,7 +25,7 @@ _SORT_COLUMNS = {
 }
 
 
-async def _require_owned_app(session: AsyncSession, app_id: int, user_id: int) -> App:
+async def require_owned_app(session: AsyncSession, app_id: int, user_id: int) -> App:
     if app_id <= 0:
         raise BusinessError(ErrorCode.PARAMS_ERROR, '应用ID不能为空')
     app = await session.scalar(select(App).where(App.id == app_id, App.is_delete == 0))
@@ -72,7 +72,7 @@ async def create_app(
 
 
 async def get_owned_app(session: AsyncSession, app_id: int, user_id: int) -> AppVO:
-    app = await _require_owned_app(session, app_id, user_id)
+    app = await require_owned_app(session, app_id, user_id)
     return await to_app_vo(session, app)
 
 
@@ -83,7 +83,7 @@ async def update_app(
 ) -> None:
     if not payload.app_name.strip():
         raise BusinessError(ErrorCode.PARAMS_ERROR, '应用名称不能为空')
-    app = await _require_owned_app(session, payload.id, user_id)
+    app = await require_owned_app(session, payload.id, user_id)
     app.app_name = payload.app_name.strip()
     app.edit_time = datetime.now()
     await session.commit()
@@ -175,7 +175,7 @@ async def delete_app(
     app_id: int,
     cleaner: AppAssetCleaner,
 ) -> None:
-    app = await _require_owned_app(session, app_id, user_id)
+    app = await require_owned_app(session, app_id, user_id)
     await session.execute(delete(ChatHistory).where(ChatHistory.app_id == app_id))
     await session.delete(app)
     await session.commit()

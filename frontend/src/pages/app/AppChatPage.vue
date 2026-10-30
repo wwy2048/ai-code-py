@@ -178,6 +178,7 @@ import {
   deleteApp as deleteAppApi,
 } from '@/api/appController'
 import { listAppChatHistory } from '@/api/chatHistoryController'
+import { createRequestId, streamGeneration, type StreamEvent } from '@/api/generationStream'
 import { CodeGenTypeEnum, formatCodeGenType } from '@/utils/codeGenTypes'
 import request from '@/request'
 
@@ -401,85 +402,65 @@ const sendMessage = async () => {
   await generateCode(message, aiMessageIndex)
 }
 
-// 生成代码 - 使用 EventSource 处理流式响应
+// 生成代码 - SSE 协议由 API 客户端处理
+let activeAbortController: AbortController | null = null
+
 const generateCode = async (userMessage: string, aiMessageIndex: number) => {
-  let eventSource: EventSource | null = null
-  let streamCompleted = false
+  const baseURL = request.defaults.baseURL || API_BASE_URL
+  let appendedContent = ''
+  activeAbortController = new AbortController()
+
+  const append = (content: string) => {
+    if (!content) return
+    appendedContent += content
+    messages.value[aiMessageIndex].content = appendedContent
+    messages.value[aiMessageIndex].loading = false
+    scrollToBottom()
+  }
+
+  const handleEvent = (streamEvent: StreamEvent) => {
+    const data = streamEvent.data
+    switch (streamEvent.event) {
+      case 'text_delta':
+        append(String(data.text || ''))
+        break
+      case 'tool_started': {
+        const path = data.path ? `：${String(data.path)}` : ''
+        append(`\n\n> 正在执行工具 ${String(data.name || '')}${path}...\n\n`)
+        break
+      }
+      case 'tool_finished': {
+        const status = data.status === 'completed' ? '完成' : '失败'
+        const size = typeof data.sizeBytes === 'number' ? `，${data.sizeBytes} 字节` : ''
+        const preview = data.preview ? `\n> ${String(data.preview).slice(0, 200)}` : ''
+        append(`\n\n> 工具 ${String(data.name || '')} ${status}${size}${preview}\n\n`)
+        break
+      }
+      case 'turn_finished':
+        isGenerating.value = false
+        if (data.status === 'completed') {
+          setTimeout(() => updatePreview(), 500)
+        } else {
+          message.error('生成失败，请重试')
+        }
+        break
+      case 'error':
+        append(`\n\n> 生成失败：${String(data.message || '请稍后重试')}\n\n`)
+        break
+    }
+  }
 
   try {
-    // 获取 axios 配置的 baseURL
-    const baseURL = request.defaults.baseURL || API_BASE_URL
-
-    // 构建URL参数
-    const params = new URLSearchParams({
-      appId: appId.value || '',
+    await streamGeneration({
+      baseURL,
+      appId: Number(appId.value),
       message: userMessage,
+      requestId: createRequestId(),
+      signal: activeAbortController.signal,
+      onEvent: handleEvent,
     })
-
-    const url = `${baseURL}/app/chat/gen/code?${params}`
-
-    // 创建 EventSource 连接
-    eventSource = new EventSource(url, {
-      withCredentials: true,
-    })
-
-    let fullContent = ''
-
-    // 处理接收到的消息
-    eventSource.onmessage = function (event) {
-      if (streamCompleted) return
-
-      try {
-        // 解析JSON包装的数据
-        const parsed = JSON.parse(event.data)
-        const content = parsed.d
-
-        // 拼接内容
-        if (content !== undefined && content !== null) {
-          fullContent += content
-          messages.value[aiMessageIndex].content = fullContent
-          messages.value[aiMessageIndex].loading = false
-          scrollToBottom()
-        }
-      } catch (error) {
-        console.error('解析消息失败:', error)
-        handleError(error, aiMessageIndex)
-      }
-    }
-
-    // 处理done事件
-    eventSource.addEventListener('done', function () {
-      if (streamCompleted) return
-
-      streamCompleted = true
-      isGenerating.value = false
-      eventSource?.close()
-
-      // 延迟更新预览，确保后端已完成处理
-      setTimeout(() => {
-        updatePreview()
-      }, 1000)
-    })
-
-    // 处理错误
-    eventSource.onerror = function () {
-      if (streamCompleted || !isGenerating.value) return
-      // 检查是否是正常的连接关闭
-      if (eventSource?.readyState === EventSource.CONNECTING) {
-        streamCompleted = true
-        isGenerating.value = false
-        eventSource?.close()
-
-        setTimeout(() => {
-          updatePreview()
-        }, 1000)
-      } else {
-        handleError(new Error('SSE连接错误'), aiMessageIndex)
-      }
-    }
   } catch (error) {
-    console.error('创建 EventSource 失败：', error)
-    handleError(error, aiMessageIndex)
+    if (!activeAbortController.signal.aborted) handleError(error, aiMessageIndex)
   }
 }
 
@@ -632,7 +613,7 @@ onMounted(() => {
 
 // 清理资源
 onUnmounted(() => {
-  // EventSource 会在组件卸载时自动清理
+  activeAbortController?.abort()
 })
 </script>
 

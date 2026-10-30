@@ -86,3 +86,9 @@ class AppVO(ApiModel):
     deploy_key: str | None
     deployed_time: datetime | None
     user: UserVO | None = None
+
+
+class GenerationRequest(ApiModel):
+    app_id: int
+    message: str = Field(min_length=1, max_length=10000)
+    request_id: str = Field(min_length=1, max_length=64)
