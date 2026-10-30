@@ -41,7 +41,7 @@
       <template #bodyCell="{ column, record }">
         <template v-if="column.dataIndex === 'cover'">
           <a-image v-if="record.cover" :src="record.cover" :width="80" :height="60" />
-          <div v-else class="no-cover">无封面</div>
+          <div v-else class="no-cover"><span>🤖</span></div>
         </template>
         <template v-else-if="column.dataIndex === 'initPrompt'">
           <a-tooltip :title="record.initPrompt">
@@ -276,8 +276,7 @@ const deleteApp = async (id: number | undefined) => {
   display: flex;
   align-items: center;
   justify-content: center;
-  color: #999;
-  font-size: 12px;
+  font-size: 28px;
   border-radius: 4px;
 }
 

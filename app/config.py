@@ -37,11 +37,15 @@ class Settings(BaseSettings):
     deploy_root: str = "tmp/code_deploy"
     deploy_url_base: str = "http://localhost:8123/api/deploy"
     screenshots_root: str = "tmp/screenshots"
+    screenshot_timeout_seconds: int = 30
+    screenshot_wait_after_load_seconds: float = 1.0
+    cover_shutdown_timeout_seconds: float = 10.0
 
     cos_secret_id: str | None = None
     cos_secret_key: str | None = None
     cos_region: str | None = None
     cos_bucket: str | None = None
+    cos_public_base_url: str | None = None
 
 
 @lru_cache

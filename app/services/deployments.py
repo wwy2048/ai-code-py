@@ -7,6 +7,7 @@ from datetime import datetime
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.cover import CoverScheduler
 from app.deployment import (
     AppDeployer,
     DeploymentSourceError,
@@ -46,6 +47,7 @@ async def deploy_app(
     user_id: int,
     app_id: int,
     deployer: AppDeployer,
+    cover_generator: CoverScheduler | None = None,
     key_factory: Callable[[], str] = generate_deploy_key,
 ) -> str:
     async with _DEPLOY_LOCK:
@@ -54,6 +56,7 @@ async def deploy_app(
             user_id=user_id,
             app_id=app_id,
             deployer=deployer,
+            cover_generator=cover_generator,
             key_factory=key_factory,
         )
 
@@ -64,6 +67,7 @@ async def _deploy_app_locked(
     user_id: int,
     app_id: int,
     deployer: AppDeployer,
+    cover_generator: CoverScheduler | None,
     key_factory: Callable[[], str],
 ) -> str:
     app = await require_owned_app(session, app_id, user_id)
@@ -78,6 +82,7 @@ async def _deploy_app_locked(
 
     app.deploy_key = deploy_key
     app.deployed_time = datetime.now()
+    app.deploy_revision = (app.deploy_revision or 0) + 1
     app.edit_time = datetime.now()
     try:
         await session.commit()
@@ -86,4 +91,6 @@ async def _deploy_app_locked(
         if is_new_key:
             await asyncio.to_thread(deployer.remove, deploy_key)
         raise
+    if cover_generator is not None:
+        cover_generator.schedule(app.id, deploy_url, app.deploy_revision)
     return deploy_url

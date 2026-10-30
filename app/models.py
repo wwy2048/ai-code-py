@@ -64,6 +64,9 @@ class App(Base):
     code_gen_type: Mapped[str | None] = mapped_column("codeGenType", String(64))
     deploy_key: Mapped[str | None] = mapped_column("deployKey", String(64), unique=True)
     deployed_time: Mapped[datetime | None] = mapped_column("deployedTime", DateTime)
+    deploy_revision: Mapped[int] = mapped_column(
+        "deploy_revision", Integer, nullable=False, server_default=text("0")
+    )
     priority: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
     user_id: Mapped[int] = mapped_column("userId", BigInteger, nullable=False)
     edit_time: Mapped[datetime] = mapped_column(

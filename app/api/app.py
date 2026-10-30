@@ -86,6 +86,7 @@ async def deploy_app_endpoint(
         user_id=current_user.id,
         app_id=payload.app_id,
         deployer=_deployer(request),
+        cover_generator=request.app.state.cover_generator,
         key_factory=request.app.state.deploy_key_factory,
     )
     return success(deploy_url)

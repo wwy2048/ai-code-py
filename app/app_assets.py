@@ -25,6 +25,7 @@ class CosCoverCleaner:
 
     def __init__(self, settings: Settings) -> None:
         self._bucket = settings.cos_bucket
+        self._public_base_path = urlparse(settings.cos_public_base_url or "").path.strip("/")
         self._client = None
         configured = (
             settings.cos_secret_id
@@ -47,6 +48,8 @@ class CosCoverCleaner:
             logger.warning("COS 未配置，跳过封面清理: %s", cover_url)
             return
         key = urlparse(cover_url).path.lstrip("/")
+        if self._public_base_path and key.startswith(f"{self._public_base_path}/"):
+            key = key[len(self._public_base_path) + 1 :]
         if not key:
             logger.warning("无法从封面 URL 提取对象键: %s", cover_url)
             return

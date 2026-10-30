@@ -17,6 +17,7 @@ from app.api.user import router as user_router
 from app.app_assets import CosCoverCleaner, LocalAppAssetCleaner
 from app.codegen_router import CodeGenTypeRouter, create_code_gen_type_router
 from app.config import Settings, get_settings
+from app.cover import CosCoverUploader, CoverGenerator, CoverScheduler, SeleniumScreenshotCapturer
 from app.db import create_engine
 from app.deployment import LocalAppDeployer
 from app.errors import (
@@ -41,6 +42,7 @@ def create_app(
     redis_client: Redis | None = None,
     code_gen_type_router: CodeGenTypeRouter | None = None,
     agent_model_factory: Callable[[str], AgentModel] | None = None,
+    cover_generator: CoverScheduler | None = None,
 ) -> FastAPI:
     app_settings = settings or get_settings()
     app_engine = engine or create_engine(app_settings.database_url)
@@ -49,6 +51,7 @@ def create_app(
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         yield
+        await app.state.cover_generator.shutdown()
         await app.state.code_gen_type_router.aclose()
         await app.state.redis.aclose()
         await app.state.engine.dispose()
@@ -66,6 +69,13 @@ def create_app(
     )
     app.state.app_deployer = LocalAppDeployer(app_settings)
     app.state.deploy_key_factory = generate_deploy_key
+    app.state.cover_generator = cover_generator or CoverGenerator(
+        app.state.session_factory,
+        capturer=SeleniumScreenshotCapturer(app_settings),
+        uploader=CosCoverUploader(app_settings),
+        screenshots_root=Path(app_settings.screenshots_root),
+        shutdown_timeout_seconds=app_settings.cover_shutdown_timeout_seconds,
+    )
     turn_executor = AgentTurnExecutor(
         app.state.session_factory,
         Path(app_settings.workspace_root),

@@ -18,6 +18,14 @@ from app.main import create_app
 from app.runtime.model import ScriptedHtmlModel
 
 
+class NoopCoverScheduler:
+    def schedule(self, app_id: int, url: str, deploy_revision: int) -> None:
+        return None
+
+    async def shutdown(self) -> None:
+        return None
+
+
 class StaticCodeGenTypeRouter:
     def __init__(self, code_gen_type: CodeGenType = CodeGenType.HTML) -> None:
         self.code_gen_type = code_gen_type
@@ -65,6 +73,7 @@ async def app_context(tmp_path: Path) -> AsyncIterator[AppContext]:
         redis_client=redis_client,
         code_gen_type_router=StaticCodeGenTypeRouter(),
         agent_model_factory=lambda _: ScriptedHtmlModel(),
+        cover_generator=NoopCoverScheduler(),
     )
     session_factory = app.state.session_factory
 
