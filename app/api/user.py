@@ -1,9 +1,23 @@
 from fastapi import APIRouter, Request, Response
 
-from app.deps import CurrentUser, DbSession, PasswordServiceDep, SessionStoreDep
+from app.deps import AdminUser, CurrentUser, DbSession, PasswordServiceDep, SessionStoreDep
 from app.response import success
-from app.schemas import UserLoginRequest, UserRegisterRequest
-from app.services.users import login_user, register_user, to_login_user_vo
+from app.schemas import (
+    DeleteRequest,
+    UserAdminUpdateRequest,
+    UserLoginRequest,
+    UserQueryRequest,
+    UserRegisterRequest,
+)
+from app.services.users import (
+    delete_user_by_admin,
+    get_user_vo,
+    list_users,
+    login_user,
+    register_user,
+    to_login_user_vo,
+    update_user_by_admin,
+)
 from app.session_cookie import clear_session_cookie, read_session_id, set_session_cookie
 
 router = APIRouter(prefix="/user", tags=["user"])
@@ -50,4 +64,42 @@ async def user_logout(
     settings = request.app.state.settings
     await session_store.delete(read_session_id(request, settings))
     clear_session_cookie(response, settings)
+    return success(True)
+
+
+@router.post("/list/page/vo")
+async def list_user_vo_by_page(
+    payload: UserQueryRequest,
+    session: DbSession,
+    _: AdminUser,
+) -> dict:
+    return success(await list_users(session, payload))
+
+
+@router.get("/get/vo")
+async def get_user_vo_by_id(
+    id: int,
+    session: DbSession,
+    _: AdminUser,
+) -> dict:
+    return success(await get_user_vo(session, id))
+
+
+@router.post("/update")
+async def update_user_by_admin_endpoint(
+    payload: UserAdminUpdateRequest,
+    session: DbSession,
+    _: AdminUser,
+) -> dict:
+    await update_user_by_admin(session, payload)
+    return success(True)
+
+
+@router.post("/delete")
+async def delete_user_by_admin_endpoint(
+    payload: DeleteRequest,
+    session: DbSession,
+    admin: AdminUser,
+) -> dict:
+    await delete_user_by_admin(session, payload.id, admin.id)
     return success(True)

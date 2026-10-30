@@ -13,7 +13,14 @@ from app.codegen_router import CodeGenTypeRouter
 from app.errors import BusinessError
 from app.models import App, ChatHistory, ModelCallLog, User
 from app.response import ErrorCode
-from app.schemas import AppCreateRequest, AppQueryRequest, AppUpdateRequest, AppVO, UserVO
+from app.schemas import (
+    AppAdminUpdateRequest,
+    AppCreateRequest,
+    AppQueryRequest,
+    AppUpdateRequest,
+    AppVO,
+    UserVO,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -143,13 +150,18 @@ async def list_apps(
     )
 
     total = await session.scalar(select(func.count(App.id)).where(*conditions)) or 0
+    statement = select(App).where(*conditions)
+    if featured_only:
+        statement = statement.order_by(
+            App.priority.desc(),
+            App.update_time.desc(),
+            App.id.desc(),
+        )
+    else:
+        statement = statement.order_by(_order_by(query), App.id.desc())
     apps = (
         await session.scalars(
-            select(App)
-            .where(*conditions)
-            .order_by(_order_by(query), App.id.desc())
-            .offset((query.page_num - 1) * query.page_size)
-            .limit(query.page_size)
+            statement.offset((query.page_num - 1) * query.page_size).limit(query.page_size)
         )
     ).all()
     users = await _user_map(session, {app.user_id for app in apps})
@@ -176,6 +188,15 @@ async def delete_app(
     cleaner: AppAssetCleaner,
 ) -> None:
     app = await require_owned_app(session, app_id, user_id)
+    await _delete_app_record(session, app, cleaner)
+
+
+async def _delete_app_record(
+    session: AsyncSession,
+    app: App,
+    cleaner: AppAssetCleaner,
+) -> None:
+    app_id = app.id
     await session.execute(delete(ChatHistory).where(ChatHistory.app_id == app_id))
     await session.execute(delete(ModelCallLog).where(ModelCallLog.app_id == app_id))
     await session.delete(app)
@@ -184,3 +205,42 @@ async def delete_app(
         await asyncio.to_thread(cleaner.delete_app_artifacts, app)
     except Exception:
         logger.exception("应用 %s 删除后清理本地产物失败", app_id)
+
+
+async def get_app_by_id_for_admin(session: AsyncSession, app_id: int) -> dict:
+    app = await session.scalar(select(App).where(App.id == app_id, App.is_delete == 0))
+    if app is None:
+        raise BusinessError(ErrorCode.NOT_FOUND, "应用不存在")
+    return (await to_app_vo(session, app)).model_dump(mode="json", by_alias=True)
+
+
+async def update_app_by_admin(
+    session: AsyncSession,
+    payload: AppAdminUpdateRequest,
+) -> None:
+    app = await session.scalar(
+        select(App).where(App.id == payload.id, App.is_delete == 0)
+    )
+    if app is None:
+        raise BusinessError(ErrorCode.NOT_FOUND, "应用不存在")
+    if payload.app_name is not None:
+        if not payload.app_name.strip():
+            raise BusinessError(ErrorCode.PARAMS_ERROR, "应用名称不能为空")
+        app.app_name = payload.app_name.strip()
+    if payload.cover is not None:
+        app.cover = payload.cover.strip() or None
+    if payload.priority is not None:
+        app.priority = payload.priority
+    app.edit_time = datetime.now()
+    await session.commit()
+
+
+async def delete_app_by_admin(
+    session: AsyncSession,
+    app_id: int,
+    cleaner: AppAssetCleaner,
+) -> None:
+    app = await session.scalar(select(App).where(App.id == app_id, App.is_delete == 0))
+    if app is None:
+        raise BusinessError(ErrorCode.NOT_FOUND, "应用不存在")
+    await _delete_app_record(session, app, cleaner)

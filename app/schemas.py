@@ -45,6 +45,13 @@ class AppUpdateRequest(ApiModel):
     app_name: str = Field(min_length=1, max_length=256)
 
 
+class AppAdminUpdateRequest(ApiModel):
+    id: int
+    app_name: str | None = Field(default=None, max_length=256)
+    cover: str | None = Field(default=None, max_length=512)
+    priority: int | None = Field(default=None, ge=0, le=99)
+
+
 class AppQueryRequest(ApiModel):
     page_num: int = Field(default=1, ge=1)
     page_size: int = Field(default=10, ge=1, le=20)
@@ -75,6 +82,26 @@ class UserVO(ApiModel):
     user_profile: str | None
     user_role: str
     create_time: datetime
+
+
+class UserQueryRequest(ApiModel):
+    page_num: int = Field(default=1, ge=1)
+    page_size: int = Field(default=10, ge=1, le=20)
+    sort_field: str | None = None
+    sort_order: str | None = None
+    id: int | None = None
+    user_account: str | None = None
+    user_name: str | None = None
+    user_profile: str | None = None
+    user_role: str | None = None
+
+
+class UserAdminUpdateRequest(ApiModel):
+    id: int
+    user_name: str | None = Field(default=None, max_length=256)
+    user_avatar: str | None = Field(default=None, max_length=1024)
+    user_profile: str | None = Field(default=None, max_length=512)
+    user_role: str | None = None
 
 
 class AppVO(ApiModel):

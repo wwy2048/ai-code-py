@@ -121,7 +121,12 @@ import { ref, reactive, onMounted, computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { message } from 'ant-design-vue'
 import { useLoginUserStore } from '@/stores/loginUser'
-import { getAppVoById, updateApp, updateAppByAdmin } from '@/api/appController'
+import {
+  getAppByIdByAdmin,
+  getAppVoById,
+  updateApp,
+  updateAppByAdmin,
+} from '@/api/appController'
 import { formatCodeGenType } from '@/utils/codeGenTypes'
 import { getDeployUrl } from '@/config/env'
 import { openExternalUrl } from '@/utils/openExternal'
@@ -175,7 +180,10 @@ const fetchAppInfo = async () => {
 
   loading.value = true
   try {
-    const res = await getAppVoById({ id: id as unknown as number })
+    const appId = id as unknown as number
+    const res = isAdmin.value
+      ? await getAppByIdByAdmin({ id: appId })
+      : await getAppVoById({ id: appId })
     if (res.data.code === 0 && res.data.data) {
       appInfo.value = res.data.data
 

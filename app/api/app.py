@@ -9,11 +9,12 @@ from fastapi.responses import Response, StreamingResponse
 from app.app_assets import AppAssetCleaner
 from app.codegen_router import CodeGenTypeRouter
 from app.deployment import AppDeployer
-from app.deps import CurrentUser, DbSession
+from app.deps import AdminUser, CurrentUser, DbSession
 from app.download import WorkspaceArchiveError, build_workspace_zip
 from app.errors import BusinessError
 from app.response import success
 from app.schemas import (
+    AppAdminUpdateRequest,
     AppCreateRequest,
     AppDeployRequest,
     AppQueryRequest,
@@ -24,10 +25,13 @@ from app.schemas import (
 from app.services.apps import (
     create_app,
     delete_app,
+    delete_app_by_admin,
+    get_app_by_id_for_admin,
     get_owned_app,
     list_apps,
     require_owned_app,
     update_app,
+    update_app_by_admin,
 )
 from app.services.deployments import deploy_app
 
@@ -75,6 +79,45 @@ async def delete_app_endpoint(
     current_user: CurrentUser,
 ) -> dict:
     await delete_app(session, current_user.id, payload.id, _asset_cleaner(request))
+    return success(True)
+
+
+@router.post("/admin/list/page/vo")
+async def list_apps_by_admin(
+    payload: AppQueryRequest,
+    session: DbSession,
+    _: AdminUser,
+) -> dict:
+    return success(await list_apps(session, payload))
+
+
+@router.get("/admin/detail/{app_id}")
+async def get_app_detail_by_admin(
+    app_id: int,
+    session: DbSession,
+    _: AdminUser,
+) -> dict:
+    return success(await get_app_by_id_for_admin(session, app_id))
+
+
+@router.put("/admin/update")
+async def update_app_by_admin_endpoint(
+    payload: AppAdminUpdateRequest,
+    session: DbSession,
+    _: AdminUser,
+) -> dict:
+    await update_app_by_admin(session, payload)
+    return success(True)
+
+
+@router.delete("/admin/delete")
+async def delete_app_by_admin_endpoint(
+    payload: DeleteRequest,
+    request: Request,
+    session: DbSession,
+    _: AdminUser,
+) -> dict:
+    await delete_app_by_admin(session, payload.id, _asset_cleaner(request))
     return success(True)
 
 

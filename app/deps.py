@@ -50,3 +50,12 @@ async def get_current_user(
 
 
 CurrentUser = Annotated[User, Depends(get_current_user)]
+
+
+async def require_admin(current_user: CurrentUser) -> User:
+    if current_user.user_role != "admin":
+        raise BusinessError(ErrorCode.NO_AUTH, "无管理员权限")
+    return current_user
+
+
+AdminUser = Annotated[User, Depends(require_admin)]

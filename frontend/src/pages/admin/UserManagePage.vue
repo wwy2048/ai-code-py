@@ -36,15 +36,38 @@
           {{ dayjs(record.createTime).format('YYYY-MM-DD HH:mm:ss') }}
         </template>
         <template v-else-if="column.key === 'action'">
-          <a-button danger @click="doDelete(record.id)">删除</a-button>
+          <a-space>
+            <a-button type="primary" @click="openEdit(record)">编辑</a-button>
+            <a-button danger @click="doDelete(record.id)">删除</a-button>
+          </a-space>
         </template>
       </template>
     </a-table>
+
+    <a-modal v-model:open="editOpen" title="编辑用户" :confirm-loading="saving" @ok="saveEdit">
+      <a-form layout="vertical">
+        <a-form-item label="用户名">
+          <a-input v-model:value="editForm.userName" />
+        </a-form-item>
+        <a-form-item label="头像 URL">
+          <a-input v-model:value="editForm.userAvatar" />
+        </a-form-item>
+        <a-form-item label="简介">
+          <a-textarea v-model:value="editForm.userProfile" :rows="3" />
+        </a-form-item>
+        <a-form-item label="角色">
+          <a-select v-model:value="editForm.userRole">
+            <a-select-option value="user">普通用户</a-select-option>
+            <a-select-option value="admin">管理员</a-select-option>
+          </a-select>
+        </a-form-item>
+      </a-form>
+    </a-modal>
   </div>
 </template>
 <script lang="ts" setup>
 import { computed, onMounted, reactive, ref } from 'vue'
-import { deleteUser, listUserVoByPage } from '@/api/userController.ts'
+import { deleteUser, listUserVoByPage, updateUser } from '@/api/userController.ts'
 import { message } from 'ant-design-vue'
 import dayjs from 'dayjs'
 
@@ -93,6 +116,16 @@ const searchParams = reactive<API.UserQueryRequest>({
   pageSize: 10,
 })
 
+const editOpen = ref(false)
+const saving = ref(false)
+const editingId = ref<number>()
+const editForm = reactive({
+  userName: '',
+  userAvatar: '',
+  userProfile: '',
+  userRole: 'user',
+})
+
 // 获取数据
 const fetchData = async () => {
   const res = await listUserVoByPage({
@@ -129,6 +162,41 @@ const doSearch = () => {
   // 重置页码
   searchParams.pageNum = 1
   fetchData()
+}
+
+const openEdit = (user: API.UserVO) => {
+  editingId.value = user.id
+  editForm.userName = user.userName || ''
+  editForm.userAvatar = user.userAvatar || ''
+  editForm.userProfile = user.userProfile || ''
+  editForm.userRole = user.userRole || 'user'
+  editOpen.value = true
+}
+
+const saveEdit = async () => {
+  if (!editingId.value) return
+  saving.value = true
+  try {
+    const res = await updateUser({
+      id: editingId.value,
+      userName: editForm.userName,
+      userAvatar: editForm.userAvatar,
+      userProfile: editForm.userProfile,
+      userRole: editForm.userRole,
+    })
+    if (res.data.code === 0) {
+      message.success('更新成功')
+      editOpen.value = false
+      await fetchData()
+    } else {
+      message.error('更新失败：' + res.data.message)
+    }
+  } catch (error) {
+    console.error('更新用户失败：', error)
+    message.error('更新用户失败')
+  } finally {
+    saving.value = false
+  }
 }
 
 // 删除数据
