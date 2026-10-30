@@ -11,6 +11,10 @@ from app.runtime.tools import TOOL_DEFINITIONS, ToolRegistry
 from app.runtime.workspace import Workspace
 
 EventEmitter = Callable[[str, dict[str, Any]], Awaitable[None]]
+_ALLOWED_WRITE_PATHS = {
+    'html': {'index.html'},
+    'multi_file': {'index.html', 'style.css', 'script.js'},
+}
 
 
 class AgentTurnExecutor:
@@ -20,11 +24,11 @@ class AgentTurnExecutor:
         self,
         session_factory: async_sessionmaker[AsyncSession],
         workspace_root_path: Path,
-        model: AgentModel,
+        model_factory: Callable[[str], AgentModel],
     ) -> None:
         self._session_factory = session_factory
         self._workspace_root_path = workspace_root_path
-        self._model = model
+        self._model_factory = model_factory
 
     async def execute(
         self,
@@ -36,6 +40,7 @@ class AgentTurnExecutor:
         turn_id: str,
         emit: EventEmitter,
     ) -> None:
+        model = self._model_factory(code_gen_type)
         async with self._session_factory() as session:
             conversation = ConversationStore(
                 session,
@@ -47,11 +52,11 @@ class AgentTurnExecutor:
             await conversation.commit()
 
             workspace = Workspace(self._workspace_root_path / f'{code_gen_type}_{app_id}')
-            registry = ToolRegistry(workspace)
+            registry = ToolRegistry(workspace, _ALLOWED_WRITE_PATHS.get(code_gen_type, set()))
             messages: list[dict[str, Any]] = [{'role': 'user', 'content': prompt}]
             assistant_parts: list[str] = []
 
-            for _ in range(8):
+            for _ in range(12):
                 streamed_parts: list[str] = []
 
                 async def on_text(
@@ -64,14 +69,14 @@ class AgentTurnExecutor:
 
                 started = perf_counter()
                 try:
-                    reply: ModelReply = await self._model.next_turn(
+                    reply: ModelReply = await model.next_turn(
                         [{**message, 'tools': TOOL_DEFINITIONS} for message in messages],
                         on_text,
                     )
                 except Exception as exc:
                     await conversation.append_model_call(
                         status=ModelCallStatus.ERROR,
-                        model_name=getattr(self._model, 'model_name', 'unknown'),
+                        model_name=getattr(model, 'model_name', 'unknown'),
                         duration_ms=int((perf_counter() - started) * 1000),
                         error_type=type(exc).__name__,
                         error_summary=str(getattr(exc, 'summary', type(exc).__name__))[:256],
@@ -81,7 +86,7 @@ class AgentTurnExecutor:
                     raise
                 await conversation.append_model_call(
                     status=ModelCallStatus.SUCCESS,
-                    model_name=reply.model_name or getattr(self._model, 'model_name', 'unknown'),
+                    model_name=reply.model_name or getattr(model, 'model_name', 'unknown'),
                     duration_ms=int((perf_counter() - started) * 1000),
                     input_tokens=reply.input_tokens,
                     output_tokens=reply.output_tokens,

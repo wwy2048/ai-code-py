@@ -63,7 +63,7 @@ async def app_context(tmp_path: Path) -> AsyncIterator[AppContext]:
         engine=engine,
         redis_client=redis_client,
         code_gen_type_router=StaticCodeGenTypeRouter(),
-        agent_model=ScriptedHtmlModel(),
+        agent_model_factory=lambda _: ScriptedHtmlModel(),
     )
     session_factory = app.state.session_factory
 

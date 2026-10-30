@@ -1,4 +1,4 @@
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -26,9 +26,9 @@ from app.errors import (
     handle_validation_error,
 )
 from app.runtime.agent import AgentTurnExecutor
-from app.runtime.anthropic_model import AnthropicHtmlModel
+from app.runtime.factory import create_agent_model_factory
 from app.runtime.manager import GenerationManager
-from app.runtime.model import AgentModel, UnavailableAgentModel
+from app.runtime.model import AgentModel
 
 
 def create_app(
@@ -37,7 +37,7 @@ def create_app(
     engine: AsyncEngine | None = None,
     redis_client: Redis | None = None,
     code_gen_type_router: CodeGenTypeRouter | None = None,
-    agent_model: AgentModel | None = None,
+    agent_model_factory: Callable[[str], AgentModel] | None = None,
 ) -> FastAPI:
     app_settings = settings or get_settings()
     app_engine = engine or create_engine(app_settings.database_url)
@@ -64,12 +64,7 @@ def create_app(
     turn_executor = AgentTurnExecutor(
         app.state.session_factory,
         Path(app_settings.workspace_root),
-        agent_model
-        or (
-            AnthropicHtmlModel(app_settings)
-            if app_settings.anthropic_api_key
-            else UnavailableAgentModel()
-        ),
+        agent_model_factory or create_agent_model_factory(app_settings),
     )
     app.state.generation_manager = GenerationManager(turn_executor)
 

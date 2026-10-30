@@ -63,8 +63,13 @@ TOOL_DEFINITIONS = [
 
 
 class ToolRegistry:
-    def __init__(self, workspace: Workspace) -> None:
+    def __init__(
+        self,
+        workspace: Workspace,
+        allowed_write_paths: set[str] | None = None,
+    ) -> None:
         self._workspace = workspace
+        self._allowed_write_paths = allowed_write_paths
         self._handlers = {
             'read_file': self._read_file,
             'write_file': self._write_file,
@@ -107,8 +112,13 @@ class ToolRegistry:
         content = self._workspace.read_file(str(arguments['path']))
         return content, len(content.encode('utf-8'))
 
+    def _validate_write_path(self, path: str) -> None:
+        if self._allowed_write_paths is not None and path not in self._allowed_write_paths:
+            raise ValueError(f'当前 codeGenType 不允许写入文件: {path}')
+
     def _write_file(self, arguments: dict[str, Any]) -> tuple[str, int]:
         path = str(arguments['path'])
+        self._validate_write_path(path)
         content = str(arguments['content'])
         self._workspace.write_file(path, content)
         size_bytes = len(content.encode('utf-8'))
@@ -116,6 +126,7 @@ class ToolRegistry:
 
     def _edit_file(self, arguments: dict[str, Any]) -> tuple[str, int]:
         path = str(arguments['path'])
+        self._validate_write_path(path)
         self._workspace.edit_file(
             path,
             str(arguments['old_text']),

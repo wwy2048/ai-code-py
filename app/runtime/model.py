@@ -112,3 +112,48 @@ class UnavailableAgentModel:
         on_text: TextEmitter,
     ) -> ModelReply:
         raise RuntimeError('未配置 ANTHROPIC_API_KEY，无法调用生成模型')
+
+
+class ScriptedMultiFileModel:
+    """确定性 MULTI_FILE 模型，用于外部行为测试。"""
+
+    async def next_turn(
+        self,
+        messages: list[dict[str, Any]],
+        on_text: TextEmitter,
+    ) -> ModelReply:
+        has_tool_result = any(message.get('role') == 'tool_result' for message in messages)
+        if has_tool_result:
+            text = '多文件页面已生成。'
+            await on_text(text)
+            return ModelReply(text=text)
+        text = '我将创建 HTML、CSS 和 JavaScript 文件。'
+        await on_text(text)
+        return ModelReply(
+            text=text,
+            tool_calls=[
+                ToolCall(
+                    id='write-index',
+                    name='write_file',
+                    arguments={
+                        'path': 'index.html',
+                        'content': (
+                            '<!doctype html><html><head>'
+                            '<link rel="stylesheet" href="style.css"></head>'
+                            '<body><h1>Multi File</h1>'
+                            '<script src="script.js"></script></body></html>'
+                        ),
+                    },
+                ),
+                ToolCall(
+                    id='write-style',
+                    name='write_file',
+                    arguments={'path': 'style.css', 'content': 'body { color: #1d4ed8; }'},
+                ),
+                ToolCall(
+                    id='write-script',
+                    name='write_file',
+                    arguments={'path': 'script.js', 'content': 'console.log("ready");'},
+                ),
+            ],
+        )

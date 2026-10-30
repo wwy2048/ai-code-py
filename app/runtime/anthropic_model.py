@@ -1,6 +1,6 @@
 import asyncio
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, ClassVar, cast
 
 from anthropic import (
     APIConnectionError,
@@ -16,8 +16,10 @@ from app.runtime.model import ModelCallError, ModelReply, TextEmitter, ToolCall
 from app.runtime.tools import TOOL_DEFINITIONS
 
 
-class AnthropicHtmlModel:
-    """通过 Anthropic 兼容协议执行 HTML 生成工具循环。"""
+class AnthropicCodeModel:
+    """通过 Anthropic 兼容协议执行代码生成工具循环。"""
+
+    prompt_file: ClassVar[str]
 
     def __init__(self, settings: Settings, client: Any | None = None) -> None:
         if not settings.anthropic_api_key and client is None:
@@ -32,9 +34,7 @@ class AnthropicHtmlModel:
         self._max_retries = settings.model_max_retries
         self._retry_base_seconds = settings.model_retry_base_seconds
         self._system_prompt = (
-            Path(__file__).parent.parent
-            / 'prompts'
-            / 'codegen-html-runtime-system-prompt.txt'
+            Path(__file__).parent.parent / 'prompts' / self.prompt_file
         ).read_text(encoding='utf-8')
 
     @property
@@ -172,3 +172,11 @@ class AnthropicHtmlModel:
                 api_messages.append({'role': 'assistant', 'content': content})
         flush_tool_results()
         return api_messages
+
+
+class AnthropicHtmlModel(AnthropicCodeModel):
+    prompt_file = 'codegen-html-runtime-system-prompt.txt'
+
+
+class AnthropicMultiFileModel(AnthropicCodeModel):
+    prompt_file = 'codegen-multi-file-runtime-system-prompt.txt'

@@ -60,3 +60,24 @@ async def test_tool_registry_returns_readable_failure_for_missing_arguments(
 
     assert result.ok is False
     assert '工具执行失败' in result.output
+
+
+async def test_tool_registry_enforces_code_gen_type_write_whitelist(
+    tmp_path: Path,
+) -> None:
+    registry = ToolRegistry(
+        Workspace(tmp_path),
+        allowed_write_paths={'index.html', 'style.css', 'script.js'},
+    )
+
+    result = await registry.execute(
+        ToolCall(
+            id='forbidden-call',
+            name='write_file',
+            arguments={'path': 'package.json', 'content': '{}'},
+        )
+    )
+
+    assert result.ok is False
+    assert '不允许写入' in result.output
+    assert not (tmp_path / 'package.json').exists()

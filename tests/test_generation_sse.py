@@ -3,13 +3,20 @@ import json
 from pathlib import Path
 from typing import Any
 
-from conftest import AppContext
+from conftest import AppContext, StaticCodeGenTypeRouter
 from sqlalchemy import func, select
 
+from app.codegen_router import CodeGenType
 from app.models import ChatHistory, ModelCallLog
 from app.runtime.agent import AgentTurnExecutor
 from app.runtime.manager import GenerationManager
-from app.runtime.model import ModelReply, TextEmitter, ToolCall, UnavailableAgentModel
+from app.runtime.model import (
+    ModelReply,
+    ScriptedMultiFileModel,
+    TextEmitter,
+    ToolCall,
+    UnavailableAgentModel,
+)
 
 
 def _parse_sse(body: str) -> list[dict]:
@@ -237,7 +244,7 @@ async def test_path_escape_is_reported_as_failed_tool_without_writing(
     executor = AgentTurnExecutor(
         app_context.session_factory,
         Path(app_context.app.state.settings.workspace_root),
-        model,
+        lambda _: model,
     )
     app_context.app.state.generation_manager = GenerationManager(executor)
 
@@ -269,7 +276,7 @@ async def test_model_failure_emits_error_then_failed_turn_without_leaking_detail
     executor = AgentTurnExecutor(
         app_context.session_factory,
         Path(app_context.app.state.settings.workspace_root),
-        FailingModel(),
+        lambda _: FailingModel(),
     )
     app_context.app.state.generation_manager = GenerationManager(executor)
 
@@ -339,7 +346,7 @@ async def test_tool_argument_error_is_returned_to_model_and_recovered(
     executor = AgentTurnExecutor(
         app_context.session_factory,
         Path(app_context.app.state.settings.workspace_root),
-        RecoveringToolModel(),
+        lambda _: RecoveringToolModel(),
     )
     app_context.app.state.generation_manager = GenerationManager(executor)
 
@@ -366,7 +373,7 @@ async def test_unavailable_model_returns_readable_failed_turn(
     executor = AgentTurnExecutor(
         app_context.session_factory,
         Path(app_context.app.state.settings.workspace_root),
-        UnavailableAgentModel(),
+        lambda _: UnavailableAgentModel(),
     )
     app_context.app.state.generation_manager = GenerationManager(executor)
 
@@ -383,3 +390,162 @@ async def test_unavailable_model_returns_readable_failed_turn(
     assert [event['event'] for event in events[-2:]] == ['error', 'turn_finished']
     assert events[-1]['data']['status'] == 'failed'
     assert 'ANTHROPIC_API_KEY' not in response.text
+
+
+async def test_multi_file_generation_writes_three_files_and_previews(
+    app_context: AppContext,
+) -> None:
+    app_context.app.state.code_gen_type_router = StaticCodeGenTypeRouter(
+        CodeGenType.MULTI_FILE
+    )
+    app_context.app.state.generation_manager = GenerationManager(
+        AgentTurnExecutor(
+            app_context.session_factory,
+            Path(app_context.app.state.settings.workspace_root),
+            lambda _: ScriptedMultiFileModel(),
+        )
+    )
+    await app_context.client.post(
+        '/api/user/register',
+        json={
+            'userAccount': 'multi-user',
+            'userPassword': 'password123',
+            'checkPassword': 'password123',
+        },
+    )
+    await app_context.client.post(
+        '/api/user/login',
+        json={'userAccount': 'multi-user', 'userPassword': 'password123'},
+    )
+    created = await app_context.client.post(
+        '/api/app/create',
+        json={'initPrompt': '创建一个多文件网站'},
+    )
+    app_id = created.json()['data']
+
+    response = await app_context.client.post(
+        '/api/app/chat/gen/code',
+        json={
+            'appId': app_id,
+            'message': '创建多文件页面',
+            'requestId': 'turn-multi-file',
+        },
+    )
+    events = _parse_sse(response.text)
+    finished = [event for event in events if event['event'] == 'tool_finished']
+
+    workspace = (
+        Path(app_context.app.state.settings.workspace_root) / f'multi_file_{app_id}'
+    )
+    assert {path.name for path in workspace.iterdir()} == {
+        'index.html',
+        'style.css',
+        'script.js',
+    }
+    assert len(finished) == 3
+    assert all(event['data']['status'] == 'completed' for event in finished)
+    event_types = [event['event'] for event in events]
+    assert 'text_delta' in event_types
+    assert event_types[-1] == 'turn_finished'
+    preview = await app_context.client.get(
+        f'/api/static/multi_file_{app_id}/index.html'
+    )
+    assert preview.status_code == 200
+    html = preview.text
+    assert 'style.css' in html
+    assert 'script.js' in html
+    assert (
+        await app_context.client.get(f'/api/static/multi_file_{app_id}/style.css')
+    ).status_code == 200
+    assert (
+        await app_context.client.get(f'/api/static/multi_file_{app_id}/script.js')
+    ).status_code == 200
+    async with app_context.session_factory() as session:
+        tool_rows = await session.scalar(
+            select(func.count(ChatHistory.id)).where(
+                ChatHistory.app_id == app_id,
+                ChatHistory.message_kind == 'tool_call',
+            )
+        )
+    assert tool_rows == 3
+
+
+class MultiFileEditModel:
+    async def next_turn(
+        self,
+        messages: list[dict[str, Any]],
+        on_text: TextEmitter,
+    ) -> ModelReply:
+        has_tool_result = any(message.get('role') == 'tool_result' for message in messages)
+        prompt = str(messages[0].get('content', ''))
+        if has_tool_result:
+            await on_text('处理完成。')
+            return ModelReply(text='处理完成。')
+        if '修改' in prompt:
+            await on_text('修改既有 HTML 标题。')
+            return ModelReply(
+                text='修改既有 HTML 标题。',
+                tool_calls=[
+                    ToolCall(
+                        id='edit-title',
+                        name='edit_file',
+                        arguments={
+                            'path': 'index.html',
+                            'old_text': '<h1>Multi File</h1>',
+                            'new_text': '<h1>Updated Multi File</h1>',
+                        },
+                    )
+                ],
+            )
+        return await ScriptedMultiFileModel().next_turn(messages, on_text)
+
+
+async def test_multi_file_follow_up_edits_existing_files(
+    app_context: AppContext,
+) -> None:
+    app_context.app.state.code_gen_type_router = StaticCodeGenTypeRouter(
+        CodeGenType.MULTI_FILE
+    )
+    model = MultiFileEditModel()
+    app_context.app.state.generation_manager = GenerationManager(
+        AgentTurnExecutor(
+            app_context.session_factory,
+            Path(app_context.app.state.settings.workspace_root),
+            lambda _: model,
+        )
+    )
+    await app_context.client.post(
+        '/api/user/register',
+        json={
+            'userAccount': 'multi-edit-user',
+            'userPassword': 'password123',
+            'checkPassword': 'password123',
+        },
+    )
+    await app_context.client.post(
+        '/api/user/login',
+        json={'userAccount': 'multi-edit-user', 'userPassword': 'password123'},
+    )
+    app_id = (
+        await app_context.client.post(
+            '/api/app/create',
+            json={'initPrompt': '创建多文件页面'},
+        )
+    ).json()['data']
+    await app_context.client.post(
+        '/api/app/chat/gen/code',
+        json={'appId': app_id, 'message': '初始页面', 'requestId': 'multi-turn-1'},
+    )
+
+    await app_context.client.post(
+        '/api/app/chat/gen/code',
+        json={'appId': app_id, 'message': '修改标题', 'requestId': 'multi-turn-2'},
+    )
+
+    workspace = (
+        Path(app_context.app.state.settings.workspace_root) / f'multi_file_{app_id}'
+    )
+    html = (workspace / 'index.html').read_text(encoding='utf-8')
+    assert '<h1>Updated Multi File</h1>' in html
+    assert (workspace / 'style.css').exists()
+    assert (workspace / 'script.js').exists()
