@@ -46,6 +46,14 @@ class FakeInferenceMessages:
             raise outcome
         return outcome
 
+    async def create(self, **kwargs: Any) -> Any:
+        self.request = kwargs
+        outcome = self._outcomes[self.calls]
+        self.calls += 1
+        if isinstance(outcome, Exception):
+            raise outcome
+        return outcome
+
 
 class FakeInferenceClient:
     def __init__(self, outcomes: list[Any]) -> None:
@@ -152,6 +160,28 @@ async def test_anthropic_html_model_maps_tool_result_into_user_message() -> None
     assert final_user_message["role"] == "user"
     assert final_user_message["content"][0]["type"] == "tool_result"
     assert final_user_message["content"][0]["is_error"] is True
+
+
+async def test_anthropic_model_summarizes_context_without_tools() -> None:
+    response = SimpleNamespace(
+        content=[SimpleNamespace(type="text", text="压缩后的摘要")],
+        usage=SimpleNamespace(input_tokens=12, output_tokens=8),
+    )
+    client = FakeInferenceClient([response])
+    model = AnthropicHtmlModel(_settings(), client=client)  # type: ignore[arg-type]
+
+    summary = await model.summarize(
+        previous_summary="旧摘要",
+        transcript='[{"role":"user","content":"新需求"}]',
+    )
+
+    assert summary.text == "压缩后的摘要"
+    assert summary.input_tokens == 12
+    assert summary.output_tokens == 8
+    request = client.messages.request
+    assert request is not None
+    assert "tools" not in request
+    assert "旧摘要" in request["messages"][0]["content"]
 
 
 class BrokenStream(FakeStream):

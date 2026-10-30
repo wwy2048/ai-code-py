@@ -26,6 +26,10 @@ class Settings(BaseSettings):
     anthropic_model: str = "deepseek-flash"
     anthropic_timeout_seconds: float = 30.0
     anthropic_max_tokens: int = 8000
+    model_context_window_tokens: int = 128000
+    context_compaction_trigger_ratio: float = 0.8
+    context_compaction_summary_max_tokens: int = 2000
+    context_compaction_fixed_overhead_tokens: int = 2000
     model_retry_base_seconds: float = 0.5
     model_max_retries: int = 3
 

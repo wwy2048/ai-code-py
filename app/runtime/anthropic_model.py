@@ -12,7 +12,7 @@ from anthropic import (
 )
 
 from app.config import Settings
-from app.runtime.model import ModelCallError, ModelReply, TextEmitter, ToolCall
+from app.runtime.model import ModelCallError, ModelReply, SummaryResult, TextEmitter, ToolCall
 from app.runtime.tools import TOOL_DEFINITIONS
 
 
@@ -31,10 +31,14 @@ class AnthropicCodeModel:
         )
         self._model = settings.anthropic_model
         self._max_tokens = settings.anthropic_max_tokens
+        self._summary_max_tokens = settings.context_compaction_summary_max_tokens
         self._max_retries = settings.model_max_retries
         self._retry_base_seconds = settings.model_retry_base_seconds
         self._system_prompt = (
             Path(__file__).parent.parent / "prompts" / self.prompt_file
+        ).read_text(encoding="utf-8")
+        self._compaction_system_prompt = (
+            Path(__file__).parent.parent / "prompts" / "context-compaction-system-prompt.txt"
         ).read_text(encoding="utf-8")
 
     @property
@@ -68,6 +72,33 @@ class AnthropicCodeModel:
                     raise ModelCallError(self._error_category(exc), attempt) from exc
                 await asyncio.sleep(self._retry_base_seconds * (2**attempt))
         raise RuntimeError("模型调用次数耗尽")
+
+    async def summarize(self, *, previous_summary: str | None, transcript: str) -> SummaryResult:
+        content = (
+            "请根据下面的历史对话生成新的上下文摘要。\n\n"
+            f"已有摘要：\n{previous_summary or '无'}\n\n"
+            f"新增历史：\n{transcript}"
+        )
+        response = await self._client.messages.create(
+            model=self._model,
+            max_tokens=self._summary_max_tokens,
+            system=self._compaction_system_prompt,
+            messages=[{"role": "user", "content": content}],
+        )
+        text = "".join(
+            str(getattr(block, "text", ""))
+            for block in response.content
+            if getattr(block, "type", None) == "text"
+        ).strip()
+        if not text:
+            raise RuntimeError("压缩模型返回空摘要")
+        usage = getattr(response, "usage", None)
+        return SummaryResult(
+            text=text,
+            model_name=self._model,
+            input_tokens=int(getattr(usage, "input_tokens", 0) or 0),
+            output_tokens=int(getattr(usage, "output_tokens", 0) or 0),
+        )
 
     @staticmethod
     def _is_retryable(exc: Exception) -> bool:

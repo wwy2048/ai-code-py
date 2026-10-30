@@ -6,13 +6,14 @@ from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from app.runtime.compaction import ContextCompactor
 from app.runtime.conversation import ConversationStore
 from app.runtime.messages import (
     assistant_tool_calls_message,
     tool_result_message,
     tool_use_block,
 )
-from app.runtime.model import AgentModel, ModelCallStatus, ModelReply
+from app.runtime.model import AgentModel, ContextSummarizer, ModelCallStatus, ModelReply
 from app.runtime.tools import ToolRegistry
 from app.runtime.vue_project import VueProjectBuilder, VueProjectTemplate
 from app.runtime.workspace import Workspace
@@ -34,11 +35,13 @@ class AgentTurnExecutor:
         workspace_root_path: Path,
         model_factory: Callable[[str], AgentModel],
         vue_builder: VueProjectBuilder | None = None,
+        context_compactor: ContextCompactor | None = None,
     ) -> None:
         self._session_factory = session_factory
         self._workspace_root_path = workspace_root_path
         self._model_factory = model_factory
         self._vue_builder = vue_builder or VueProjectBuilder()
+        self._context_compactor = context_compactor
         self._vue_template = VueProjectTemplate()
 
     async def execute(
@@ -59,6 +62,14 @@ class AgentTurnExecutor:
                 user_id=user_id,
                 turn_id=turn_id,
             )
+            if self._context_compactor is not None:
+                summarizer = model if isinstance(model, ContextSummarizer) else None
+                await self._context_compactor.maybe_compact(
+                    conversation,
+                    summarizer=summarizer,
+                    pending_text=prompt,
+                    emit=emit,
+                )
             history = await conversation.load_active_model_messages()
             await conversation.append_user(prompt)
             await conversation.commit()

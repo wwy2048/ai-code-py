@@ -33,7 +33,7 @@ def test_baseline_creates_schema_on_empty_database(tmp_path: Path) -> None:
         model_log_columns = {
             row[1] for row in connection.execute("PRAGMA table_info(model_call_log)")
         }
-    assert {"error_summary", "retry_count"} <= model_log_columns
+    assert {"call_kind", "error_summary", "retry_count"} <= model_log_columns
     assert {
         "turn_id",
         "sequence",

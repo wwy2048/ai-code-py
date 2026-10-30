@@ -66,22 +66,74 @@ class ConversationStore:
 
     async def load_active_model_messages(self) -> list[dict[str, Any]]:
         """加载当前 App 仍生效的运行时消息，并投影为模型协议消息。"""
-        records = (
-            await self._session.scalars(
-                select(ChatHistory)
-                .where(
-                    ChatHistory.app_id == self._app_id,
-                    ChatHistory.is_delete == 0,
-                    ChatHistory.active.is_(True),
+        records = await self.load_active_records()
+        summary_records = [
+            record for record in records if record.message_kind == MessageKind.COMPACTION
+        ]
+        other_records = [
+            record for record in records if record.message_kind != MessageKind.COMPACTION
+        ]
+        return project_model_messages([*summary_records, *other_records])
+
+    async def load_active_records(self) -> list[ChatHistory]:
+        """按稳定顺序加载当前 App 仍生效的原始运行时记录。"""
+        return list(
+            (
+                await self._session.scalars(
+                    select(ChatHistory)
+                    .where(
+                        ChatHistory.app_id == self._app_id,
+                        ChatHistory.is_delete == 0,
+                        ChatHistory.active.is_(True),
+                    )
+                    .order_by(
+                        ChatHistory.sequence.asc(),
+                        ChatHistory.create_time.asc(),
+                        ChatHistory.id.asc(),
+                    )
                 )
-                .order_by(
-                    ChatHistory.sequence.asc(),
-                    ChatHistory.create_time.asc(),
-                    ChatHistory.id.asc(),
-                )
+            ).all()
+        )
+
+    async def latest_provider_usage_tokens(self) -> int:
+        """读取最近一次成功模型调用的 provider token usage。"""
+        latest = await self._session.scalar(
+            select(ModelCallLog)
+            .where(
+                ModelCallLog.app_id == self._app_id,
+                ModelCallLog.status == ModelCallStatus.SUCCESS.value,
+                ModelCallLog.call_kind == "generation",
             )
-        ).all()
-        return _project_model_messages(list(records))
+            .order_by(ModelCallLog.id.desc())
+            .limit(1)
+        )
+        if latest is None:
+            return 0
+        return latest.input_tokens + latest.output_tokens
+
+    async def append_compaction_summary(
+        self,
+        summary: str,
+        *,
+        compacted_records: list[ChatHistory],
+        payload: dict[str, Any] | None = None,
+    ) -> ChatHistory:
+        """追加隐藏且 active 的摘要，并把被覆盖记录标记为非 active。"""
+        record = await self._append(
+            message=summary,
+            message_type=MessageType.AI,
+            message_kind=MessageKind.COMPACTION,
+            visible=False,
+            payload=payload,
+        )
+        await self._session.flush()
+        for compacted in compacted_records:
+            compacted.active = False
+            compacted.compacted_by = record.id
+        return record
+
+    async def rollback(self) -> None:
+        await self._session.rollback()
 
     async def append_assistant(self, message: str) -> None:
         await self._append(
@@ -141,6 +193,7 @@ class ConversationStore:
         *,
         status: ModelCallStatus,
         model_name: str,
+        call_kind: str = "generation",
         duration_ms: int,
         input_tokens: int = 0,
         output_tokens: int = 0,
@@ -153,6 +206,7 @@ class ConversationStore:
                 app_id=self._app_id,
                 turn_id=self._turn_id,
                 model_name=model_name,
+                call_kind=call_kind,
                 status=status.value,
                 duration_ms=duration_ms,
                 input_tokens=input_tokens,
@@ -177,28 +231,28 @@ class ConversationStore:
         tool_name: str | None = None,
         payload: dict[str, Any] | None = None,
         is_error: bool = False,
-    ) -> None:
-        self._session.add(
-            ChatHistory(
-                message=message,
-                message_type=message_type.value,
-                app_id=self._app_id,
-                user_id=self._user_id,
-                turn_id=self._turn_id,
-                sequence=await self._take_sequence(),
-                message_kind=message_kind.value,
-                payload=payload,
-                visible=visible,
-                active=True,
-                tool_call_id=tool_call_id,
-                tool_name=tool_name,
-                is_error=is_error,
-                is_delete=0,
-            )
+    ) -> ChatHistory:
+        record = ChatHistory(
+            message=message,
+            message_type=message_type.value,
+            app_id=self._app_id,
+            user_id=self._user_id,
+            turn_id=self._turn_id,
+            sequence=await self._take_sequence(),
+            message_kind=message_kind.value,
+            payload=payload,
+            visible=visible,
+            active=True,
+            tool_call_id=tool_call_id,
+            tool_name=tool_name,
+            is_error=is_error,
+            is_delete=0,
         )
+        self._session.add(record)
+        return record
 
 
-def _project_model_messages(records: list[ChatHistory]) -> list[dict[str, Any]]:
+def project_model_messages(records: list[ChatHistory]) -> list[dict[str, Any]]:
     """保持工具调用与结果成对，并丢弃无法安全回放的不完整消息。"""
     pending_calls: dict[tuple[str | None, str | None], list[ChatHistory]] = {}
     result_by_call: dict[int, ChatHistory] = {}

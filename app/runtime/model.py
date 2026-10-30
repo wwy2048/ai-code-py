@@ -1,7 +1,7 @@
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from enum import StrEnum
-from typing import Any, Protocol
+from typing import Any, Protocol, runtime_checkable
 
 
 @dataclass(frozen=True)
@@ -24,6 +24,15 @@ class ModelReply:
     retry_count: int = 0
 
 
+@dataclass(frozen=True)
+class SummaryResult:
+    text: str
+    model_name: str
+    input_tokens: int = 0
+    output_tokens: int = 0
+    retry_count: int = 0
+
+
 class ModelCallStatus(StrEnum):
     SUCCESS = "success"
     ERROR = "error"
@@ -42,6 +51,19 @@ class AgentModel(Protocol):
         messages: list[dict[str, Any]],
         on_text: TextEmitter,
     ) -> ModelReply: ...
+
+
+@runtime_checkable
+class ContextSummarizer(Protocol):
+    @property
+    def model_name(self) -> str: ...
+
+    async def summarize(
+        self,
+        *,
+        previous_summary: str | None,
+        transcript: str,
+    ) -> SummaryResult: ...
 
 
 class ScriptedHtmlModel:

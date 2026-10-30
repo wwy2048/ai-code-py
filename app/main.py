@@ -26,6 +26,7 @@ from app.errors import (
     handle_validation_error,
 )
 from app.runtime.agent import AgentTurnExecutor
+from app.runtime.compaction import ContextCompactor
 from app.runtime.factory import create_agent_model_factory
 from app.runtime.manager import GenerationManager
 from app.runtime.model import AgentModel
@@ -65,6 +66,11 @@ def create_app(
         app.state.session_factory,
         Path(app_settings.workspace_root),
         agent_model_factory or create_agent_model_factory(app_settings),
+        context_compactor=ContextCompactor(
+            context_window_tokens=app_settings.model_context_window_tokens,
+            trigger_ratio=app_settings.context_compaction_trigger_ratio,
+            fixed_overhead_tokens=app_settings.context_compaction_fixed_overhead_tokens,
+        ),
     )
     app.state.generation_manager = GenerationManager(turn_executor)
 

@@ -457,6 +457,16 @@ const generateCode = async (userMessage: string, aiMessageIndex: number) => {
         append(`\n\n> 工具 ${String(data.name || '')} ${status}${size}${preview}\n\n`)
         break
       }
+      case 'compaction': {
+        if (data.status === 'started') {
+          append('\n\n> 正在压缩较早的会话上下文...\n\n')
+        } else if (data.status === 'completed') {
+          append(`\n\n> 上下文压缩完成，已整理 ${String(data.compactedMessages || 0)} 条历史消息。\n\n`)
+        } else if (data.status === 'failed') {
+          append('\n\n> 上下文压缩失败，本轮继续使用原上下文。\n\n')
+        }
+        break
+      }
       case 'turn_finished':
         isGenerating.value = false
         if (data.status === 'completed') {

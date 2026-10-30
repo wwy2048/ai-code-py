@@ -128,6 +128,9 @@ class ModelCallLog(Base):
     app_id: Mapped[int] = mapped_column("appId", BigInteger, nullable=False)
     turn_id: Mapped[str] = mapped_column("turn_id", String(64), nullable=False)
     model_name: Mapped[str] = mapped_column("model_name", String(128), nullable=False)
+    call_kind: Mapped[str] = mapped_column(
+        "call_kind", String(32), nullable=False, server_default=text("'generation'")
+    )
     status: Mapped[str] = mapped_column(String(32), nullable=False)
     duration_ms: Mapped[int] = mapped_column("duration_ms", Integer, nullable=False)
     input_tokens: Mapped[int] = mapped_column(
