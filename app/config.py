@@ -1,17 +1,26 @@
 from functools import lru_cache
+from pathlib import Path
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+# 锚定项目根目录的 .env，避免从 app/ 或其他目录启动时读不到配置
+_ENV_FILE = Path(__file__).resolve().parent.parent / ".env"
 
 
 class Settings(BaseSettings):
     """应用运行配置，全部通过环境变量注入。"""
 
-    model_config = SettingsConfigDict(env_file=".env", extra="ignore", case_sensitive=False)
+    model_config = SettingsConfigDict(
+        env_file=_ENV_FILE, extra="ignore", case_sensitive=False
+    )
 
     database_url: str
     redis_url: str = "redis://localhost:6379/0"
     api_prefix: str = "/api"
+    server_host: str = "127.0.0.1"
+    server_port: int = 8123
+    log_level: str = "info"
     session_cookie_name: str = "AICODE_SESSION"
     session_cookie_secure: bool = False
     session_ttl_seconds: int = 3600

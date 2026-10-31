@@ -19,6 +19,9 @@ dependencies = [
     "uvicorn[standard]>=0.32,<1",
 ]
 
+[project.scripts]
+ai-code-py = "app.main:run"
+
 [dependency-groups]
 dev = [
     "aiosqlite>=0.20,<1",

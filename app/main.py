@@ -124,3 +124,21 @@ def create_app(
     app.include_router(app_router, prefix=app_settings.api_prefix)
     app.include_router(chat_history_router, prefix=app_settings.api_prefix)
     return app
+
+
+def run() -> None:
+    """``ai-code-py`` 命令入口（等价于 ``uvicorn app.main:create_app --factory``）。"""
+    import uvicorn
+
+    settings = get_settings()
+    uvicorn.run(
+        "app.main:create_app",
+        factory=True,
+        host=settings.server_host,
+        port=settings.server_port,
+        log_level=settings.log_level.lower(),
+    )
+
+
+if __name__ == "__main__":
+    run()
