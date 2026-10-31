@@ -178,7 +178,7 @@ class AgentTurnExecutor:
                 *history,
                 {"role": "user", "content": prompt},
             ]
-            assistant_parts: list[str] = []
+            assistant_round_texts: list[str] = []
             model_round = 0
 
             async def run_model_rounds() -> None:
@@ -190,7 +190,6 @@ class AgentTurnExecutor:
 
                     async def on_text(delta: str, parts: list[str] = streamed_parts) -> None:
                         parts.append(delta)
-                        assistant_parts.append(delta)
                         await emit("text_delta", {"text": delta})
 
                     started = perf_counter()
@@ -238,8 +237,10 @@ class AgentTurnExecutor:
                         retry_count=reply.retry_count,
                     )
                     await conversation.commit()
+                    round_text = "".join(streamed_parts) if streamed_parts else reply.text
+                    if round_text.strip():
+                        assistant_round_texts.append(round_text.strip())
                     if reply.text and not streamed_parts:
-                        assistant_parts.append(reply.text)
                         await emit("text_delta", {"text": reply.text})
                     if reply.stop_reason == "max_tokens":
                         if not reply.tool_calls:
@@ -416,7 +417,7 @@ class AgentTurnExecutor:
             else:
                 await run_model_rounds()
 
-            assistant_text = "\n\n".join(assistant_parts).strip() or "页面已生成。"
+            assistant_text = "\n\n".join(assistant_round_texts).strip() or "页面已生成。"
             await conversation.append_assistant(assistant_text)
             if self._memory_enabled:
                 await memory_store.save_from_turn(turn_id, prompt, assistant_text)

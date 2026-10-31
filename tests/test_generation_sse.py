@@ -376,6 +376,46 @@ class TruncatedToolCallModel:
         return ModelReply(text="已按小片段完成写入。")
 
 
+class DeltaStreamingModel:
+    async def next_turn(
+        self,
+        messages: list[dict[str, Any]],
+        on_text: TextEmitter,
+    ) -> ModelReply:
+        await on_text("你好")
+        await on_text("，世界")
+        return ModelReply(text="你好，世界")
+
+
+async def test_streamed_deltas_are_concatenated_in_persisted_assistant_message(
+    app_context: AppContext,
+) -> None:
+    _, app_id = await _register_login_and_create_app(app_context)
+    app_context.app.state.generation_manager = GenerationManager(
+        AgentTurnExecutor(
+            app_context.session_factory,
+            Path(app_context.app.state.settings.workspace_root),
+            lambda _: DeltaStreamingModel(),
+        )
+    )
+
+    response = await app_context.client.post(
+        "/api/app/chat/gen/code",
+        json={"appId": app_id, "message": "测试流式拼接", "requestId": "turn-delta-join"},
+    )
+
+    assert '"status": "completed"' in response.text
+    async with app_context.session_factory() as session:
+        assistant = await session.scalar(
+            select(ChatHistory).where(
+                ChatHistory.app_id == app_id,
+                ChatHistory.message_kind == "assistant",
+            )
+        )
+    assert assistant is not None
+    assert assistant.message == "你好，世界"
+
+
 async def test_truncated_tool_call_is_fed_back_without_executing_partial_arguments(
     app_context: AppContext,
 ) -> None:
