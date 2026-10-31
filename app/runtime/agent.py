@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.runtime.compaction import ContextCompactor
 from app.runtime.conversation import ConversationStore
+from app.runtime.debug_log import AgentDebugLogger
 from app.runtime.memory import MemoryStore
 from app.runtime.messages import (
     assistant_tool_calls_message,
@@ -43,6 +44,8 @@ class AgentTurnExecutor:
         subagent_enabled: bool = False,
         subagent_max_rounds: int = 6,
         subagent_timeout_seconds: float = 60.0,
+        agent_debug_log_enabled: bool = False,
+        agent_debug_log_max_chars: int = 100000,
     ) -> None:
         self._session_factory = session_factory
         self._workspace_root_path = workspace_root_path
@@ -54,6 +57,10 @@ class AgentTurnExecutor:
         self._subagent_enabled = subagent_enabled
         self._subagent_max_rounds = subagent_max_rounds
         self._subagent_timeout_seconds = subagent_timeout_seconds
+        self._debug = AgentDebugLogger(
+            enabled=agent_debug_log_enabled,
+            max_chars=agent_debug_log_max_chars,
+        )
         self._vue_template = VueProjectTemplate()
 
     async def execute(
@@ -187,12 +194,25 @@ class AgentTurnExecutor:
                         await emit("text_delta", {"text": delta})
 
                     started = perf_counter()
+                    self._debug.llm_request(
+                        turn_id=turn_id,
+                        round_index=model_round,
+                        model_name=getattr(model, "model_name", "unknown"),
+                        messages=messages,
+                        tools=registry.definitions,
+                    )
                     try:
                         reply: ModelReply = await model.next_turn(
                             [{**message, "tools": registry.definitions} for message in messages],
                             on_text,
                         )
                     except Exception as exc:
+                        self._debug.llm_error(
+                            turn_id=turn_id,
+                            round_index=model_round,
+                            error=exc,
+                            duration_ms=int((perf_counter() - started) * 1000),
+                        )
                         await conversation.append_model_call(
                             status=ModelCallStatus.ERROR,
                             model_name=getattr(model, "model_name", "unknown"),
@@ -203,6 +223,12 @@ class AgentTurnExecutor:
                         )
                         await conversation.commit()
                         raise
+                    self._debug.llm_response(
+                        turn_id=turn_id,
+                        round_index=model_round,
+                        reply=reply,
+                        duration_ms=int((perf_counter() - started) * 1000),
+                    )
                     await conversation.append_model_call(
                         status=ModelCallStatus.SUCCESS,
                         model_name=reply.model_name or getattr(model, "model_name", "unknown"),
@@ -222,6 +248,7 @@ class AgentTurnExecutor:
                             )
                         truncated_results: list[dict[str, Any]] = []
                         for call in reply.tool_calls:
+                            self._debug.tool_started(turn_id=turn_id, call=call)
                             result = ToolExecutionResult(
                                 ok=False,
                                 output=(
@@ -262,6 +289,14 @@ class AgentTurnExecutor:
                                     **result.public_input,
                                 },
                             )
+                            self._debug.tool_finished(
+                                turn_id=turn_id,
+                                call=call,
+                                ok=False,
+                                output=result.output,
+                                duration_ms=0,
+                                size_bytes=None,
+                            )
                         messages.append(
                             assistant_tool_calls_message(
                                 [
@@ -281,6 +316,7 @@ class AgentTurnExecutor:
                         return
                     current_results: list[dict[str, Any]] = []
                     for call in reply.tool_calls:
+                        self._debug.tool_started(turn_id=turn_id, call=call)
                         await emit(
                             "tool_started",
                             {
@@ -290,6 +326,14 @@ class AgentTurnExecutor:
                             },
                         )
                         result = await registry.execute(call)
+                        self._debug.tool_finished(
+                            turn_id=turn_id,
+                            call=call,
+                            ok=result.ok,
+                            output=result.output,
+                            duration_ms=result.duration_ms,
+                            size_bytes=result.size_bytes,
+                        )
                         await conversation.append_tool_call(
                             call,
                             batch_id=batch_id,

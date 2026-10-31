@@ -22,6 +22,8 @@ class Settings(BaseSettings):
     server_host: str = "127.0.0.1"
     server_port: int = 8123
     log_level: str = "info"
+    agent_debug_log_enabled: bool = False
+    agent_debug_log_max_chars: int = 100000
     session_cookie_name: str = "AICODE_SESSION"
     session_cookie_secure: bool = False
     session_ttl_seconds: int = 3600
