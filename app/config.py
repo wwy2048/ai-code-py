@@ -1,11 +1,12 @@
 from functools import lru_cache
 from pathlib import Path
 
-from pydantic import Field
+from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # 锚定项目根目录的 .env，避免从 app/ 或其他目录启动时读不到配置
 _ENV_FILE = Path(__file__).resolve().parent.parent / ".env"
+_PROJECT_ROOT = _ENV_FILE.parent
 
 
 class Settings(BaseSettings):
@@ -42,10 +43,10 @@ class Settings(BaseSettings):
     model_retry_base_seconds: float = 0.5
     model_max_retries: int = 3
 
-    workspace_root: str = "tmp/codeOutput"
-    deploy_root: str = "tmp/code_deploy"
+    workspace_root: str = str(_PROJECT_ROOT / "tmp/codeOutput")
+    deploy_root: str = str(_PROJECT_ROOT / "tmp/code_deploy")
     deploy_url_base: str = "http://localhost:8123/api/deploy"
-    screenshots_root: str = "tmp/screenshots"
+    screenshots_root: str = str(_PROJECT_ROOT / "tmp/screenshots")
     screenshot_timeout_seconds: int = 30
     screenshot_wait_after_load_seconds: float = 1.0
     cover_shutdown_timeout_seconds: float = 10.0
@@ -61,6 +62,14 @@ class Settings(BaseSettings):
     cos_region: str | None = None
     cos_bucket: str | None = None
     cos_public_base_url: str | None = None
+
+    @model_validator(mode="after")
+    def resolve_runtime_paths(self) -> "Settings":
+        for field_name in ("workspace_root", "deploy_root", "screenshots_root"):
+            value = Path(getattr(self, field_name))
+            resolved = value if value.is_absolute() else _PROJECT_ROOT / value
+            object.__setattr__(self, field_name, str(resolved.resolve()))
+        return self
 
 
 @lru_cache
