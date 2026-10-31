@@ -124,6 +124,8 @@ async def test_html_generation_runs_tool_loop_streams_events_and_persists_sessio
     assert [record["messageType"] for record in visible_records] == ["ai", "user"]
     assert visible_records[1]["message"] == "生成一个蓝色主题的个人主页"
     assert visible_records[0]["message"]
+    assert "正在执行工具 write_file" in visible_records[0]["message"]
+    assert "工具 write_file 完成" in visible_records[0]["message"]
 
 
 async def test_same_request_id_does_not_create_duplicate_turn_and_can_resume(

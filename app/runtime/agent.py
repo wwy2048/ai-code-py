@@ -179,6 +179,7 @@ class AgentTurnExecutor:
                 {"role": "user", "content": prompt},
             ]
             assistant_round_texts: list[str] = []
+            visible_message_parts: list[str] = []
             model_round = 0
 
             async def run_model_rounds() -> None:
@@ -240,6 +241,7 @@ class AgentTurnExecutor:
                     round_text = "".join(streamed_parts) if streamed_parts else reply.text
                     if round_text.strip():
                         assistant_round_texts.append(round_text.strip())
+                        visible_message_parts.append(round_text.strip())
                     if reply.text and not streamed_parts:
                         await emit("text_delta", {"text": reply.text})
                     if reply.stop_reason == "max_tokens":
@@ -250,6 +252,14 @@ class AgentTurnExecutor:
                         truncated_results: list[dict[str, Any]] = []
                         for call in reply.tool_calls:
                             self._debug.tool_started(turn_id=turn_id, call=call)
+                            visible_message_parts.append(
+                                f"> 正在执行工具 {call.name}"
+                                + (
+                                    f"：{call.arguments['path']}"
+                                    if isinstance(call.arguments.get("path"), str)
+                                    else ""
+                                )
+                            )
                             result = ToolExecutionResult(
                                 ok=False,
                                 output=(
@@ -290,6 +300,9 @@ class AgentTurnExecutor:
                                     **result.public_input,
                                 },
                             )
+                            visible_message_parts.append(
+                                f"> 工具 {call.name} 失败：{result.output[:300]}"
+                            )
                             self._debug.tool_finished(
                                 turn_id=turn_id,
                                 call=call,
@@ -318,6 +331,14 @@ class AgentTurnExecutor:
                     current_results: list[dict[str, Any]] = []
                     for call in reply.tool_calls:
                         self._debug.tool_started(turn_id=turn_id, call=call)
+                        visible_message_parts.append(
+                            f"> 正在执行工具 {call.name}"
+                            + (
+                                f"：{call.arguments['path']}"
+                                if isinstance(call.arguments.get("path"), str)
+                                else ""
+                            )
+                        )
                         await emit(
                             "tool_started",
                             {
@@ -365,6 +386,15 @@ class AgentTurnExecutor:
                                 "preview": result.output[:300],
                                 **result.public_input,
                             },
+                        )
+                        status = "完成" if result.ok else "失败"
+                        size = (
+                            f"，{result.size_bytes} 字节"
+                            if result.size_bytes is not None
+                            else ""
+                        )
+                        visible_message_parts.append(
+                            f"> 工具 {call.name} {status}{size}\n> {result.output[:300]}"
                         )
                     messages.append(
                         assistant_tool_calls_message(
@@ -418,7 +448,10 @@ class AgentTurnExecutor:
                 await run_model_rounds()
 
             assistant_text = "\n\n".join(assistant_round_texts).strip() or "页面已生成。"
-            await conversation.append_assistant(assistant_text)
+            visible_assistant_text = (
+                "\n\n".join(visible_message_parts).strip() or assistant_text
+            )
+            await conversation.append_assistant(visible_assistant_text)
             if self._memory_enabled:
                 await memory_store.save_from_turn(turn_id, prompt, assistant_text)
             await conversation.commit()
