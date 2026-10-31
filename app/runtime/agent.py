@@ -16,7 +16,7 @@ from app.runtime.messages import (
 )
 from app.runtime.model import AgentModel, ContextSummarizer, ModelCallStatus, ModelReply
 from app.runtime.subagent import SubagentRunner
-from app.runtime.tools import ToolRegistry
+from app.runtime.tools import ToolExecutionResult, ToolRegistry
 from app.runtime.vue_project import VueProjectBuilder, VueProjectTemplate
 from app.runtime.workspace import Workspace
 
@@ -215,6 +215,68 @@ class AgentTurnExecutor:
                     if reply.text and not streamed_parts:
                         assistant_parts.append(reply.text)
                         await emit("text_delta", {"text": reply.text})
+                    if reply.stop_reason == "max_tokens":
+                        if not reply.tool_calls:
+                            raise RuntimeError(
+                                "模型输出达到 token 上限，请缩短需求或拆分为多个回合"
+                            )
+                        truncated_results: list[dict[str, Any]] = []
+                        for call in reply.tool_calls:
+                            result = ToolExecutionResult(
+                                ok=False,
+                                output=(
+                                    "工具调用因模型输出达到 max_tokens 被截断，未执行。"
+                                    "请把大文件拆成最小骨架和多次较小的 edit_file 调用。"
+                                ),
+                                public_input=registry.public_input(call),
+                                duration_ms=0,
+                            )
+                            await conversation.append_tool_call(
+                                call,
+                                batch_id=batch_id,
+                                assistant_text=reply.text,
+                            )
+                            await conversation.append_tool_result(
+                                call,
+                                result,
+                                batch_id=batch_id,
+                            )
+                            await conversation.commit()
+                            truncated_results.append(
+                                tool_result_message(
+                                    tool_call_id=call.id,
+                                    name=call.name,
+                                    content=result.output,
+                                    is_error=True,
+                                )
+                            )
+                            await emit(
+                                "tool_finished",
+                                {
+                                    "toolCallId": call.id,
+                                    "name": call.name,
+                                    "status": "failed",
+                                    "durationMs": 0,
+                                    "sizeBytes": None,
+                                    "preview": result.output,
+                                    **result.public_input,
+                                },
+                            )
+                        messages.append(
+                            assistant_tool_calls_message(
+                                [
+                                    tool_use_block(
+                                        tool_call_id=call.id,
+                                        name=call.name,
+                                        arguments=call.arguments,
+                                    )
+                                    for call in reply.tool_calls
+                                ],
+                                content=reply.text,
+                            )
+                        )
+                        messages.extend(truncated_results)
+                        continue
                     if not reply.tool_calls:
                         return
                     current_results: list[dict[str, Any]] = []

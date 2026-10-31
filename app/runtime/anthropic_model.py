@@ -161,6 +161,7 @@ class AnthropicCodeModel:
             output_tokens=int(getattr(usage, "output_tokens", 0) or 0),
             model_name=self._model,
             retry_count=retry_count,
+            stop_reason=getattr(final, "stop_reason", None),
         )
 
     @staticmethod

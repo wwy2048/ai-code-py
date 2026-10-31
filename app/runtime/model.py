@@ -22,6 +22,7 @@ class ModelReply:
     output_tokens: int = 0
     model_name: str = ""
     retry_count: int = 0
+    stop_reason: str | None = None
 
 
 @dataclass(frozen=True)

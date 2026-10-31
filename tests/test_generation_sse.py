@@ -335,6 +335,78 @@ class RecoveringToolModel:
         )
 
 
+class TruncatedToolCallModel:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def next_turn(
+        self,
+        messages: list[dict[str, Any]],
+        on_text: TextEmitter,
+    ) -> ModelReply:
+        self.calls += 1
+        if self.calls == 1:
+            return ModelReply(
+                text="准备写入完整页面。",
+                tool_calls=[
+                    ToolCall(
+                        id="truncated-write",
+                        name="write_file",
+                        arguments={"path": "index.html"},
+                    )
+                ],
+                output_tokens=8000,
+                stop_reason="max_tokens",
+            )
+        if self.calls == 2:
+            failed = next(
+                message for message in reversed(messages) if message.get("role") == "tool_result"
+            )
+            assert failed["is_error"] is True
+            assert "max_tokens" in failed["content"]
+            return ModelReply(
+                tool_calls=[
+                    ToolCall(
+                        id="chunked-write",
+                        name="write_file",
+                        arguments={"path": "index.html", "content": "<h1>chunked</h1>"},
+                    )
+                ]
+            )
+        return ModelReply(text="已按小片段完成写入。")
+
+
+async def test_truncated_tool_call_is_fed_back_without_executing_partial_arguments(
+    app_context: AppContext,
+) -> None:
+    user_id, app_id = await _register_login_and_create_app(app_context)
+    model = TruncatedToolCallModel()
+    app_context.app.state.generation_manager = GenerationManager(
+        AgentTurnExecutor(
+            app_context.session_factory,
+            Path(app_context.app.state.settings.workspace_root),
+            lambda _: model,
+        )
+    )
+
+    response = await app_context.client.post(
+        "/api/app/chat/gen/code",
+        json={"appId": app_id, "message": "生成大页面", "requestId": "turn-truncated"},
+    )
+    events = _parse_sse(response.text)
+
+    assert model.calls == 3
+    assert '"status": "completed"' in response.text
+    failed = next(
+        event
+        for event in events
+        if event["event"] == "tool_finished" and event["data"]["status"] == "failed"
+    )
+    assert "max_tokens" in failed["data"]["preview"]
+    workspace = Path(app_context.app.state.settings.workspace_root) / f"html_{app_id}"
+    assert (workspace / "index.html").read_text(encoding="utf-8") == "<h1>chunked</h1>"
+
+
 async def test_tool_argument_error_is_returned_to_model_and_recovered(
     app_context: AppContext,
 ) -> None:

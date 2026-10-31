@@ -206,6 +206,24 @@ async def test_anthropic_model_uses_dynamic_tools_from_runtime_messages() -> Non
     assert request["tools"] == dynamic_tools
 
 
+async def test_anthropic_model_reports_max_tokens_stop_reason() -> None:
+    final = SimpleNamespace(
+        content=[SimpleNamespace(type="text", text="准备写入")],
+        usage=SimpleNamespace(input_tokens=10, output_tokens=8000),
+        stop_reason="max_tokens",
+    )
+    client = FakeInferenceClient([FakeStream(["准备写入"], final)])
+    model = AnthropicHtmlModel(_settings(), client=client)  # type: ignore[arg-type]
+
+    async def on_text(text: str) -> None:
+        return None
+
+    reply = await model.next_turn([{"role": "user", "content": "创建"}], on_text)
+
+    assert reply.stop_reason == "max_tokens"
+    assert reply.output_tokens == 8000
+
+
 class BrokenStream(FakeStream):
     @property
     def text_stream(self) -> AsyncIterator[str]:

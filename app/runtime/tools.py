@@ -97,6 +97,23 @@ class ToolRegistry:
                 public_input=self.public_input(call),
                 duration_ms=0,
             )
+        definition = next(
+            (item for item in self.definitions if item.get("name") == call.name),
+            None,
+        )
+        required = (
+            definition.get("input_schema", {}).get("required", [])
+            if definition is not None
+            else []
+        )
+        missing = [key for key in required if key not in call.arguments]
+        if missing:
+            return ToolExecutionResult(
+                ok=False,
+                output=f"工具 {call.name} 缺少必需参数: {', '.join(missing)}",
+                public_input=self.public_input(call),
+                duration_ms=int((perf_counter() - started) * 1000),
+            )
         size_bytes: int | None = None
         try:
             handled = handler(call.arguments)

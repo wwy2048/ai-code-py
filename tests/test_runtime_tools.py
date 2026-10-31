@@ -59,7 +59,7 @@ async def test_tool_registry_returns_readable_failure_for_missing_arguments(
     )
 
     assert result.ok is False
-    assert "工具执行失败" in result.output
+    assert "缺少必需参数: content" in result.output
 
 
 async def test_tool_registry_enforces_code_gen_type_write_whitelist(
