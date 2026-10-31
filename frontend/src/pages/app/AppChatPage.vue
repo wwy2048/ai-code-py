@@ -73,7 +73,26 @@
                 <a-avatar :src="aiAvatar" />
               </div>
               <div class="message-content">
-                <MarkdownRenderer v-if="message.content" :content="message.content" />
+                <div
+                  v-for="(block, blockIndex) in message.blocks || []"
+                  :key="`${message.id || index}-${block.type === 'tool_group' ? block.groupId : block.batchId || blockIndex}-${blockIndex}`"
+                  class="assistant-block"
+                >
+                  <MarkdownRenderer
+                    v-if="block.type === 'text' && block.content"
+                    :content="block.content"
+                  />
+                  <ToolActivityGroup
+                    v-else-if="block.type === 'tool_group' && block.tools?.length"
+                    :activities="block.tools"
+                    :running="block.running"
+                    :turn-active="message.turnId === activeTurnId && isGenerating"
+                  />
+                </div>
+                <MarkdownRenderer
+                  v-if="message.content && !message.blocks?.length"
+                  :content="message.content"
+                />
                 <div v-if="message.loading" class="loading-indicator">
                   <a-spin size="small" />
                   <span>AI 正在思考...</span>
@@ -188,6 +207,7 @@ import { CodeGenTypeEnum, formatCodeGenType } from '@/utils/codeGenTypes'
 import request from '@/request'
 
 import MarkdownRenderer from '@/components/MarkdownRenderer.vue'
+import ToolActivityGroup from '@/components/ToolActivityGroup.vue'
 import AppDetailModal from '@/components/AppDetailModal.vue'
 import DeploySuccessModal from '@/components/DeploySuccessModal.vue'
 import aiAvatar from '@/assets/aiAvatar.png'
@@ -211,17 +231,35 @@ const appInfo = ref<API.AppVO>()
 const appId = ref<string>()
 
 // 对话相关
+interface TextChatBlock {
+  type: 'text'
+  batchId?: string
+  content: string
+}
+
+interface ToolGroupChatBlock {
+  type: 'tool_group'
+  groupId: string
+  tools: API.ToolActivity[]
+  running?: boolean
+}
+
+type ChatBlock = TextChatBlock | ToolGroupChatBlock
+
 interface Message {
   type: 'user' | 'ai'
   content: string
+  blocks?: ChatBlock[]
   loading?: boolean
   id?: number
   createTime?: string
+  turnId?: string
 }
 
 const messages = ref<Message[]>([])
 const userInput = ref('')
 const isGenerating = ref(false)
+const activeTurnId = ref<string>()
 const messagesContainer = ref<HTMLElement>()
 const hasInitialConversation = ref(false) // 标记是否已经进行过初始对话
 
@@ -256,6 +294,20 @@ const appDetailVisible = ref(false)
 // 显示应用详情
 const showAppDetail = () => {
   appDetailVisible.value = true
+}
+
+// 将后端有序 parts 转换为前端渲染块
+const toChatBlocks = (parts: API.ChatTurnPart[] | undefined): ChatBlock[] => {
+  return (parts || []).flatMap((part): ChatBlock[] => {
+    if (part.type === 'assistant_text') {
+      const content = String(part.content || '')
+      return content ? [{ type: 'text', batchId: part.batchId, content }] : []
+    }
+    const tools = part.tools || []
+    return tools.length
+      ? [{ type: 'tool_group', groupId: part.groupId, tools, running: false }]
+      : []
+  })
 }
 
 // 获取对话历史
@@ -293,13 +345,64 @@ const fetchChatHistory = async () => {
       lastCreateTime.value = records[0].createTime
       lastId.value = records[0].id
 
-      // 将对话历史转换为消息格式
-      const historyMessages: Message[] = records.map((record) => ({
-        type: record.messageType === 'user' ? 'user' : 'ai',
-        content: record.message || '',
-        id: record.id,
-        createTime: record.createTime,
-      }))
+      // 将对话历史按 Turn 重建为一个 AI 气泡，内部保持文本/工具批次顺序。
+      const partsByTurn = res.data.data.partsByTurn || {}
+      const visibleAssistantTurns = new Set(
+        records
+          .filter(record => record.messageType !== 'user' && record.turnId)
+          .map(record => record.turnId as string)
+      )
+      const renderedTurnIds = new Set(
+        messages.value
+          .filter(message => message.type === 'ai' && message.turnId)
+          .map(message => message.turnId as string)
+      )
+      const historyMessages: Message[] = []
+
+      for (const record of records) {
+        const turnId = record.turnId || ''
+        if (record.messageType === 'user') {
+          historyMessages.push({
+            type: 'user',
+            content: record.message || '',
+            id: record.id,
+            createTime: record.createTime,
+            turnId: record.turnId,
+          })
+          if (
+            turnId &&
+            !visibleAssistantTurns.has(turnId) &&
+            !renderedTurnIds.has(turnId) &&
+            partsByTurn[turnId]?.length
+          ) {
+            historyMessages.push({
+              type: 'ai',
+              content: '',
+              createTime: record.createTime,
+              turnId,
+              blocks: toChatBlocks(partsByTurn[turnId]),
+            })
+            renderedTurnIds.add(turnId)
+          }
+          continue
+        }
+
+        if (!turnId || renderedTurnIds.has(turnId)) continue
+        const blocks = toChatBlocks(partsByTurn[turnId])
+        if (!blocks.length && record.message) {
+          blocks.push({ type: 'text', batchId: 'legacy', content: record.message })
+        }
+        if (!blocks.length) continue
+        historyMessages.push({
+          type: 'ai',
+          content: record.message || '',
+          id: record.id,
+          createTime: record.createTime,
+          turnId,
+          blocks,
+        })
+        renderedTurnIds.add(turnId)
+      }
 
       // 将历史消息添加到消息列表的开头
       messages.value = [...historyMessages, ...messages.value]
@@ -390,6 +493,7 @@ const sendInitialMessage = async (prompt: string) => {
   messages.value.push({
     type: 'ai',
     content: '',
+    blocks: [],
     loading: true,
   })
 
@@ -421,6 +525,7 @@ const sendMessage = async () => {
   messages.value.push({
     type: 'ai',
     content: '',
+    blocks: [],
     loading: true,
   })
 
@@ -437,64 +542,166 @@ let activeAbortController: AbortController | null = null
 
 const generateCode = async (userMessage: string, aiMessageIndex: number) => {
   const baseURL = request.defaults.baseURL || API_BASE_URL
-  let appendedContent = ''
   activeAbortController = new AbortController()
+  const requestId = createRequestId()
+  activeTurnId.value = requestId
+  messages.value[aiMessageIndex].turnId = requestId
 
-  const append = (content: string) => {
+  const getBlocks = () => {
+    const messageItem = messages.value[aiMessageIndex]
+    if (!messageItem.blocks) messageItem.blocks = []
+    return messageItem.blocks
+  }
+
+  const refreshContent = () => {
+    const messageItem = messages.value[aiMessageIndex]
+    messageItem.content = getBlocks()
+      .filter((block): block is TextChatBlock => block.type === 'text')
+      .map(block => block.content)
+      .join('\n\n')
+  }
+
+  let liveToolGroupSeq = 0
+
+  // 同一模型轮次的增量文本进入同一个文本块；可见文本是工具折叠组的边界。
+  const appendText = (content: string, batchId = '') => {
     if (!content) return
-    appendedContent += content
-    messages.value[aiMessageIndex].content = appendedContent
+    const blocks = getBlocks()
+    const last = blocks[blocks.length - 1]
+    if (last?.type === 'text' && (last.batchId || '') === batchId) {
+      last.content += content
+    } else {
+      blocks.push({ type: 'text', batchId: batchId || undefined, content })
+    }
     messages.value[aiMessageIndex].loading = false
+    refreshContent()
     scrollToBottom()
   }
+
+  // 连续工具调用无论来自几个 batch，都归入文本边界内的同一个折叠组。
+  const ensureToolGroup = (): ToolGroupChatBlock => {
+    const blocks = getBlocks()
+    const last = blocks[blocks.length - 1]
+    if (last?.type === 'tool_group') return last
+    const group: ToolGroupChatBlock = {
+      type: 'tool_group',
+      groupId: `live:${requestId}:tools:${++liveToolGroupSeq}`,
+      tools: [],
+      running: true,
+    }
+    blocks.push(group)
+    return group
+  }
+
+  const publicInput = (data: Record<string, unknown>) => ({
+    ...(data.path ? { path: String(data.path) } : {}),
+    ...(data.pattern ? { pattern: String(data.pattern) } : {}),
+  })
 
   const handleEvent = (streamEvent: StreamEvent) => {
     const data = streamEvent.data
     switch (streamEvent.event) {
       case 'text_delta':
-        append(String(data.text || ''))
+        appendText(String(data.text || ''), String(data.batchId || ''))
         break
       case 'tool_started': {
-        const path = data.path ? `：${String(data.path)}` : ''
-        append(`\n\n> 正在执行工具 ${String(data.name || '')}${path}...\n\n`)
+        const toolCallId = String(data.toolCallId || '')
+        const group = ensureToolGroup()
+        group.running = true
+        group.tools = [
+          ...group.tools,
+          {
+            toolCallId,
+            toolName: String(data.name || 'tool'),
+            batchId: String(data.batchId || ''),
+            status: 'running',
+            input: publicInput(data),
+          },
+        ]
         break
       }
       case 'tool_finished': {
-        const status = data.status === 'completed' ? '完成' : '失败'
-        const size = typeof data.sizeBytes === 'number' ? `，${data.sizeBytes} 字节` : ''
-        const preview = data.preview ? `\n> ${String(data.preview).slice(0, 200)}` : ''
-        append(`\n\n> 工具 ${String(data.name || '')} ${status}${size}${preview}\n\n`)
+        const toolCallId = String(data.toolCallId || '')
+        const blocks = getBlocks()
+        let group = blocks.find(
+          (block): block is ToolGroupChatBlock =>
+            block.type === 'tool_group' &&
+            block.tools.some(activity => activity.toolCallId === toolCallId)
+        )
+        if (!group) group = ensureToolGroup()
+        const existing = group.tools.find(item => item.toolCallId === toolCallId)
+        const status = data.status === 'completed' ? 'completed' : 'failed'
+        if (existing) {
+          existing.status = status
+          existing.batchId = String(data.batchId || existing.batchId || '')
+          existing.outputPreview = String(data.preview || '')
+          existing.durationMs =
+            typeof data.durationMs === 'number' ? data.durationMs : existing.durationMs
+          existing.sizeBytes =
+            typeof data.sizeBytes === 'number' ? data.sizeBytes : existing.sizeBytes
+          existing.isError = status === 'failed'
+        } else {
+          group.tools = [
+            ...group.tools,
+            {
+              toolCallId,
+              toolName: String(data.name || 'tool'),
+              batchId: String(data.batchId || ''),
+              status,
+              input: publicInput(data),
+              outputPreview: String(data.preview || ''),
+              durationMs: typeof data.durationMs === 'number' ? data.durationMs : undefined,
+              sizeBytes: typeof data.sizeBytes === 'number' ? data.sizeBytes : undefined,
+              isError: status === 'failed',
+            },
+          ]
+        }
+        group.running = group.tools.some(activity => activity.status === 'running')
         break
       }
       case 'compaction': {
         if (data.status === 'started') {
-          append('\n\n> 正在压缩较早的会话上下文...\n\n')
+          appendText('> 正在压缩较早的会话上下文...', 'status:compaction')
         } else if (data.status === 'completed') {
-          append(`\n\n> 上下文压缩完成，已整理 ${String(data.compactedMessages || 0)} 条历史消息。\n\n`)
+          appendText(
+            `> 上下文压缩完成，已整理 ${String(data.compactedMessages || 0)} 条历史消息。`,
+            'status:compaction'
+          )
         } else if (data.status === 'failed') {
-          append('\n\n> 上下文压缩失败，本轮继续使用原上下文。\n\n')
+          appendText('> 上下文压缩失败，本轮继续使用原上下文。', 'status:compaction')
         }
         break
       }
       case 'subagent_started':
-        append('\n\n> 子代理开始处理局部任务...\n\n')
+        appendText('> 子代理开始处理局部任务...', 'status:subagent')
         break
       case 'subagent_finished':
-        append('\n\n> 子代理已完成局部任务。\n\n')
+        appendText('> 子代理已完成局部任务。', 'status:subagent')
         break
       case 'subagent_failed':
-        append('\n\n> 子代理执行失败，主流程将继续处理。\n\n')
+        appendText('> 子代理执行失败，主流程将继续处理。', 'status:subagent')
         break
-      case 'turn_finished':
+      case 'turn_finished': {
         isGenerating.value = false
+        activeTurnId.value = undefined
+        const messageItem = messages.value[aiMessageIndex]
+        messageItem.loading = false
+        messageItem.blocks?.forEach(block => {
+          if (block.type !== 'tool_group') return
+          block.running = false
+          block.tools.forEach(activity => {
+            if (activity.status === 'running') activity.status = 'interrupted'
+          })
+        })
         if (data.status === 'completed') {
           setTimeout(() => updatePreview(), 500)
         } else {
           message.error('生成失败，请重试')
         }
         break
+      }
       case 'error':
-        append(`\n\n> 生成失败：${String(data.message || '请稍后重试')}\n\n`)
+        appendText(`> 生成失败：${String(data.message || '请稍后重试')}`, 'status:error')
         break
     }
   }
@@ -504,7 +711,7 @@ const generateCode = async (userMessage: string, aiMessageIndex: number) => {
       baseURL,
       appId: Number(appId.value),
       message: userMessage,
-      requestId: createRequestId(),
+      requestId,
       signal: activeAbortController.signal,
       onEvent: handleEvent,
     })
@@ -516,10 +723,13 @@ const generateCode = async (userMessage: string, aiMessageIndex: number) => {
 // 错误处理函数
 const handleError = (error: unknown, aiMessageIndex: number) => {
   console.error('生成代码失败：', error)
-  messages.value[aiMessageIndex].content = '抱歉，生成过程中出现了错误，请重试。'
+  const content = '抱歉，生成过程中出现了错误，请重试。'
+  messages.value[aiMessageIndex].content = content
+  messages.value[aiMessageIndex].blocks = [{ type: 'text', batchId: 'error', content }]
   messages.value[aiMessageIndex].loading = false
   message.error('生成失败，请重试')
   isGenerating.value = false
+  activeTurnId.value = undefined
 }
 
 // 更新预览
@@ -771,6 +981,10 @@ onUnmounted(() => {
 
 .message-avatar {
   flex-shrink: 0;
+}
+
+.assistant-block + .assistant-block {
+  margin-top: 10px;
 }
 
 .load-more-container {

@@ -73,10 +73,13 @@ async def _seed_turn(
                 name="write_file",
                 arguments={"path": "index.html", "content": f"<h1>{turn_id}</h1>"},
             )
+            await conversation.append_assistant(
+                f"assistant-before-{turn_id}",
+                batch_id=f"{turn_id}:1",
+            )
             await conversation.append_tool_call(
                 call,
                 batch_id=f"{turn_id}:1",
-                assistant_text=f"assistant-before-{turn_id}",
             )
             await conversation.append_tool_result(
                 call,

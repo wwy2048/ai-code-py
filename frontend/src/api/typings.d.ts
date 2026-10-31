@@ -144,6 +144,33 @@ declare namespace API {
     preview?: string
   }
 
+  type ToolActivity = {
+    toolCallId?: string
+    toolName?: string
+    batchId?: string
+    status?: 'running' | 'completed' | 'failed' | 'interrupted'
+    input?: Record<string, unknown>
+    outputPreview?: string
+    durationMs?: number
+    sizeBytes?: number
+    isError?: boolean
+    sequence?: number
+  }
+
+  type ChatTurnPart =
+    | {
+        type: 'assistant_text'
+        batchId?: string
+        sequence?: number
+        content?: string
+      }
+    | {
+        type: 'tool_group'
+        groupId: string
+        sequence?: number
+        tools?: ToolActivity[]
+      }
+
   type ChatHistoryQueryRequest = {
     pageNum?: number
     pageSize?: number
@@ -265,6 +292,8 @@ declare namespace API {
 
   type PageChatHistory = {
     records?: ChatHistory[]
+    partsByTurn?: Record<string, ChatTurnPart[]>
+    activitiesByTurn?: Record<string, ToolActivity[]>
     pageNumber?: number
     pageSize?: number
     totalPage?: number

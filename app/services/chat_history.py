@@ -1,5 +1,6 @@
 from datetime import datetime
 from math import ceil
+from typing import Any
 
 from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -62,6 +63,142 @@ def _admin_record(record: ChatHistory) -> dict:
         "toolName": record.tool_name,
         "isError": record.is_error,
         "preview": preview,
+    }
+
+
+def _allowed_tool_input(payload: dict | None) -> dict[str, object]:
+    if not isinstance(payload, dict):
+        return {}
+    source = payload.get("input")
+    if not isinstance(source, dict):
+        source = payload.get("arguments")
+    if not isinstance(source, dict):
+        return {}
+    return {name: source[name] for name in ("path", "pattern") if name in source}
+
+
+def _tool_activity(call: ChatHistory, result: ChatHistory | None) -> dict:
+    payload = call.payload or {}
+    result_payload = result.payload if result is not None else {}
+    status = (
+        "failed"
+        if result is not None and result.is_error
+        else "completed"
+        if result is not None
+        else "interrupted"
+    )
+    return {
+        "toolCallId": call.tool_call_id,
+        "toolName": call.tool_name,
+        "batchId": payload.get("batchId"),
+        "status": status,
+        "input": _allowed_tool_input(result_payload) or _allowed_tool_input(payload),
+        "outputPreview": (
+            sanitize_sensitive_text(result.message, limit=500) if result is not None else ""
+        ),
+        "durationMs": (result_payload or {}).get("durationMs"),
+        "sizeBytes": (result_payload or {}).get("sizeBytes"),
+        "isError": bool(result.is_error) if result is not None else False,
+        "sequence": call.sequence,
+    }
+
+
+def build_turn_parts(records: list[ChatHistory]) -> dict[str, list[dict]]:
+    """按可见文本边界投影展示 parts；连续工具调用合并为一个折叠组。"""
+    results_by_key: dict[tuple[str, str], ChatHistory] = {}
+    assistant_batches: set[tuple[str, str]] = set()
+
+    for record in records:
+        turn_id = record.turn_id
+        if not turn_id:
+            continue
+        if record.message_kind == "tool_result" and record.tool_call_id:
+            results_by_key[(turn_id, record.tool_call_id)] = record
+        elif record.message_kind == "assistant" and record.visible and record.message.strip():
+            batch_id = (record.payload or {}).get("batchId")
+            if isinstance(batch_id, str) and batch_id:
+                assistant_batches.add((turn_id, batch_id))
+
+    parts_by_turn: dict[str, list[dict]] = {}
+    current_group: dict[str, dict[str, Any]] = {}
+    emitted_legacy_batches: set[tuple[str, str]] = set()
+
+    for record in records:
+        turn_id = record.turn_id
+        if not turn_id:
+            continue
+        if record.message_kind == "assistant" and record.visible and record.message.strip():
+            parts_by_turn.setdefault(turn_id, []).append(
+                {
+                    "type": "assistant_text",
+                    "batchId": (record.payload or {}).get("batchId"),
+                    "sequence": record.sequence,
+                    "content": record.message,
+                }
+            )
+            # 只有真正展示给用户的文本才会结束当前工具折叠组。
+            current_group.pop(turn_id, None)
+            continue
+        if record.message_kind != "tool_call" or not record.tool_call_id:
+            continue
+
+        raw_batch_id = (record.payload or {}).get("batchId")
+        batch_id = raw_batch_id if isinstance(raw_batch_id, str) else ""
+        batch_key = (turn_id, batch_id or f"legacy:{record.tool_call_id}")
+
+        # 兼容旧数据：旧版本把该轮 assistant 文本塞在 tool_call.payload 中。
+        if batch_key not in assistant_batches and batch_key not in emitted_legacy_batches:
+            emitted_legacy_batches.add(batch_key)
+            legacy_text = str((record.payload or {}).get("assistantText") or "").strip()
+            if legacy_text:
+                parts_by_turn.setdefault(turn_id, []).append(
+                    {
+                        "type": "assistant_text",
+                        "batchId": batch_id or None,
+                        "sequence": record.sequence,
+                        "content": legacy_text,
+                    }
+                )
+                current_group.pop(turn_id, None)
+
+        group = current_group.get(turn_id)
+        if group is None:
+            group_id = f"{turn_id}:tools:{record.sequence or record.tool_call_id}"
+            group = {
+                "type": "tool_group",
+                "groupId": group_id,
+                "sequence": record.sequence,
+                "tools": [],
+            }
+            parts_by_turn.setdefault(turn_id, []).append(group)
+            current_group[turn_id] = group
+        group["tools"].append(
+            _tool_activity(
+                record,
+                results_by_key.get((turn_id, record.tool_call_id)),
+            )
+        )
+
+    for parts in parts_by_turn.values():
+        parts.sort(
+            key=lambda part: (
+                part.get("sequence") or 0,
+                0 if part.get("type") == "assistant_text" else 1,
+            )
+        )
+    return parts_by_turn
+
+
+def _tool_activities(parts_by_turn: dict[str, list[dict]]) -> dict[str, list[dict]]:
+    """保留旧接口的扁平工具活动字段，供兼容调用方使用。"""
+    return {
+        turn_id: [
+            activity
+            for part in parts
+            if part.get("type") == "tool_group"
+            for activity in part.get("tools", [])
+        ]
+        for turn_id, parts in parts_by_turn.items()
     }
 
 
@@ -238,8 +375,34 @@ async def list_visible_history(
             .limit(page_size)
         )
     ).all()
+    turn_ids = {record.turn_id for record in records if record.turn_id}
+    timeline_rows = (
+        list(
+            (
+                await session.scalars(
+                    select(ChatHistory)
+                    .where(
+                        ChatHistory.app_id == app_id,
+                        ChatHistory.is_delete == 0,
+                        ChatHistory.turn_id.in_(turn_ids),
+                    )
+                    .order_by(
+                        ChatHistory.sequence.asc(),
+                        ChatHistory.create_time.asc(),
+                        ChatHistory.id.asc(),
+                    )
+                )
+            ).all()
+        )
+        if turn_ids
+        else []
+    )
+    parts_by_turn = build_turn_parts(timeline_rows)
     return {
         "records": [serialize_chat_history(record) for record in records],
+        "partsByTurn": parts_by_turn,
+        # 兼容旧前端/调试脚本，实际展示以 partsByTurn 的顺序为准。
+        "activitiesByTurn": _tool_activities(parts_by_turn),
         "pageNumber": 1,
         "pageSize": page_size,
         "totalPage": (total + page_size - 1) // page_size if total else 0,

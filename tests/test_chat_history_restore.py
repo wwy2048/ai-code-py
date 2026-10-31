@@ -450,11 +450,27 @@ async def test_follow_up_restores_prior_active_context_after_relogin(
     )
     assert (workspace / write_path).read_text(encoding="utf-8") == "<h1>follow-up</h1>"
 
-    visible = (await app_context.client.get(f"/api/chatHistory/app/{app_id}")).json()["data"][
-        "records"
+    history_data = (await app_context.client.get(f"/api/chatHistory/app/{app_id}")).json()[
+        "data"
     ]
-    assert [record["messageType"] for record in visible] == ["ai", "user", "ai", "user"]
+    visible = history_data["records"]
+    assert [record["messageType"] for record in visible].count("user") == 2
+    assert [record["messageType"] for record in visible].count("ai") == 4
     assert all(record["messageKind"] in {"user", "assistant"} for record in visible)
+    assert all(
+        "正在执行工具" not in record["message"]
+        for record in visible
+        if record["messageType"] == "ai"
+    )
+    for turn_id in ("restore-turn-1", "restore-turn-2"):
+        parts = history_data["partsByTurn"][turn_id]
+        assert [part["type"] for part in parts] == [
+            "assistant_text",
+            "tool_group",
+            "assistant_text",
+        ]
+        assert len(parts[1]["tools"]) == 2
+        assert all(tool["status"] == "completed" for tool in parts[1]["tools"])
 
     async with app_context.session_factory() as session:
         rows = (

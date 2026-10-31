@@ -84,6 +84,8 @@ async def test_html_generation_runs_tool_loop_streams_events_and_persists_sessio
     assert "tool_finished" in event_types
     tool_finished = next(event for event in events if event["event"] == "tool_finished")
     assert tool_finished["data"]["sizeBytes"] > 0
+    tool_started = next(event for event in events if event["event"] == "tool_started")
+    assert tool_started["data"]["batchId"] == tool_finished["data"]["batchId"]
     assert event_types[-1] == "turn_finished"
     assert all(event["data"]["turnId"] == request_id for event in events)
     assert all(event["data"]["sequence"] == event["id"] for event in events)
@@ -120,12 +122,35 @@ async def test_html_generation_runs_tool_loop_streams_events_and_persists_sessio
     assert all(log.retry_count == 0 for log in model_logs)
 
     visible_history = await app_context.client.get(f"/api/chatHistory/app/{app_id}")
-    visible_records = visible_history.json()["data"]["records"]
-    assert [record["messageType"] for record in visible_records] == ["ai", "user"]
-    assert visible_records[1]["message"] == "生成一个蓝色主题的个人主页"
-    assert visible_records[0]["message"]
-    assert "正在执行工具 write_file" in visible_records[0]["message"]
-    assert "工具 write_file 完成" in visible_records[0]["message"]
+    history_data = visible_history.json()["data"]
+    visible_records = history_data["records"]
+    assert [record["messageType"] for record in visible_records] == ["ai", "ai", "user"]
+    assert visible_records[-1]["message"] == "生成一个蓝色主题的个人主页"
+    assistant_messages = [
+        record["message"] for record in visible_records if record["messageType"] == "ai"
+    ]
+    assert assistant_messages == [
+        "页面已生成，可以直接在右侧预览。",
+        "我将创建 index.html。",
+    ]
+    assert all("正在执行工具" not in message for message in assistant_messages)
+
+    parts = history_data["partsByTurn"][request_id]
+    assert [part["type"] for part in parts] == [
+        "assistant_text",
+        "tool_group",
+        "assistant_text",
+    ]
+    assert parts[0]["content"] == "我将创建 index.html。"
+    assert parts[1]["groupId"]
+    assert parts[2]["content"] == "页面已生成，可以直接在右侧预览。"
+    assert len(parts[1]["tools"]) == 1
+    activity = parts[1]["tools"][0]
+    assert activity["batchId"] == tool_started["data"]["batchId"]
+    assert activity["toolName"] == "write_file"
+    assert activity["status"] == "completed"
+    assert activity["input"] == {"path": "index.html"}
+    assert activity["outputPreview"]
 
 
 async def test_same_request_id_does_not_create_duplicate_turn_and_can_resume(
@@ -260,6 +285,19 @@ async def test_path_escape_is_reported_as_failed_tool_without_writing(
     assert tool_finished["data"]["status"] == "failed"
     assert not (Path(app_context.app.state.settings.workspace_root).parent / "escape.html").exists()
     assert events[-1]["event"] == "turn_finished"
+    history = (
+        await app_context.client.get(f"/api/chatHistory/app/{app_id}")
+    ).json()["data"]
+    parts = history["partsByTurn"]["turn-path-escape"]
+    assert [part["type"] for part in parts] == [
+        "assistant_text",
+        "tool_group",
+        "assistant_text",
+    ]
+    activity = parts[1]["tools"][0]
+    assert activity["status"] == "failed"
+    assert activity["isError"] is True
+    assert activity["input"] == {"path": "../escape.html"}
 
 
 class FailingModel:
@@ -387,6 +425,224 @@ class DeltaStreamingModel:
         await on_text("你好")
         await on_text("，世界")
         return ModelReply(text="你好，世界")
+
+
+class TwoBatchModel:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def next_turn(
+        self,
+        messages: list[dict[str, Any]],
+        on_text: TextEmitter,
+    ) -> ModelReply:
+        self.calls += 1
+        if self.calls == 1:
+            await on_text("先写页面骨架。")
+            return ModelReply(
+                text="先写页面骨架。",
+                tool_calls=[
+                    ToolCall(
+                        id="batch-one-write",
+                        name="write_file",
+                        arguments={"path": "index.html", "content": "<h1>old</h1>"},
+                    )
+                ],
+            )
+        if self.calls == 2:
+            await on_text("骨架完成后更新标题。")
+            return ModelReply(
+                text="骨架完成后更新标题。",
+                tool_calls=[
+                    ToolCall(
+                        id="batch-two-edit",
+                        name="edit_file",
+                        arguments={
+                            "path": "index.html",
+                            "old_text": "<h1>old</h1>",
+                            "new_text": "<h1>new</h1>",
+                        },
+                    )
+                ],
+            )
+        await on_text("两次工具批次已按顺序完成。")
+        return ModelReply(text="两次工具批次已按顺序完成。")
+
+
+async def test_one_turn_preserves_multiple_tool_batches_in_sequence(
+    app_context: AppContext,
+) -> None:
+    _, app_id = await _register_login_and_create_app(app_context)
+    app_context.app.state.generation_manager = GenerationManager(
+        AgentTurnExecutor(
+            app_context.session_factory,
+            Path(app_context.app.state.settings.workspace_root),
+            lambda _: TwoBatchModel(),
+        )
+    )
+
+    response = await app_context.client.post(
+        "/api/app/chat/gen/code",
+        json={
+            "appId": app_id,
+            "message": "分两批修改页面",
+            "requestId": "turn-two-batches",
+        },
+    )
+    events = _parse_sse(response.text)
+    started_batches = [
+        event["data"]["batchId"]
+        for event in events
+        if event["event"] == "tool_started"
+    ]
+    assert len(started_batches) == 2
+    assert len(set(started_batches)) == 2
+
+    history_data = (
+        await app_context.client.get(f"/api/chatHistory/app/{app_id}")
+    ).json()["data"]
+    parts = history_data["partsByTurn"]["turn-two-batches"]
+    assert [part["type"] for part in parts] == [
+        "assistant_text",
+        "tool_group",
+        "assistant_text",
+        "tool_group",
+        "assistant_text",
+    ]
+    assert [part.get("content") for part in parts if part["type"] == "assistant_text"] == [
+        "先写页面骨架。",
+        "骨架完成后更新标题。",
+        "两次工具批次已按顺序完成。",
+    ]
+    groups = [part for part in parts if part["type"] == "tool_group"]
+    assert len({group["groupId"] for group in groups}) == 2
+    assert [group["tools"][0]["batchId"] for group in groups] == started_batches
+    assert [group["tools"][0]["toolName"] for group in groups] == ["write_file", "edit_file"]
+    assert all(group["tools"][0]["status"] == "completed" for group in groups)
+
+    visible_ai_messages = [
+        record["message"]
+        for record in history_data["records"]
+        if record["messageType"] == "ai"
+    ]
+    assert visible_ai_messages == [
+        "两次工具批次已按顺序完成。",
+        "骨架完成后更新标题。",
+        "先写页面骨架。",
+    ]
+
+    async with app_context.session_factory() as session:
+        assistant_rows = (
+            await session.scalars(
+                select(ChatHistory)
+                .where(
+                    ChatHistory.app_id == app_id,
+                    ChatHistory.message_kind == "assistant",
+                )
+                .order_by(ChatHistory.sequence.asc())
+            )
+        ).all()
+    assert [row.message for row in assistant_rows] == [
+        "先写页面骨架。",
+        "骨架完成后更新标题。",
+        "两次工具批次已按顺序完成。",
+    ]
+    assert all((row.payload or {}).get("batchId") for row in assistant_rows)
+
+
+class ConsecutiveToolRoundsModel:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def next_turn(
+        self,
+        messages: list[dict[str, Any]],
+        on_text: TextEmitter,
+    ) -> ModelReply:
+        self.calls += 1
+        if self.calls == 1:
+            await on_text("先写页面骨架。")
+            return ModelReply(
+                text="先写页面骨架。",
+                tool_calls=[
+                    ToolCall(
+                        id="consecutive-write",
+                        name="write_file",
+                        arguments={"path": "index.html", "content": "<h1>one</h1>"},
+                    )
+                ],
+            )
+        if self.calls == 2:
+            return ModelReply(
+                tool_calls=[
+                    ToolCall(
+                        id="consecutive-edit-two",
+                        name="edit_file",
+                        arguments={
+                            "path": "index.html",
+                            "old_text": "<h1>one</h1>",
+                            "new_text": "<h1>two</h1>",
+                        },
+                    )
+                ],
+            )
+        if self.calls == 3:
+            return ModelReply(
+                tool_calls=[
+                    ToolCall(
+                        id="consecutive-edit-three",
+                        name="edit_file",
+                        arguments={
+                            "path": "index.html",
+                            "old_text": "<h1>two</h1>",
+                            "new_text": "<h1>three</h1>",
+                        },
+                    )
+                ],
+            )
+        await on_text("连续工具调用完成。")
+        return ModelReply(text="连续工具调用完成。")
+
+
+async def test_consecutive_tool_rounds_without_text_share_one_group(
+    app_context: AppContext,
+) -> None:
+    _, app_id = await _register_login_and_create_app(app_context)
+    app_context.app.state.generation_manager = GenerationManager(
+        AgentTurnExecutor(
+            app_context.session_factory,
+            Path(app_context.app.state.settings.workspace_root),
+            lambda _: ConsecutiveToolRoundsModel(),
+        )
+    )
+
+    await app_context.client.post(
+        "/api/app/chat/gen/code",
+        json={
+            "appId": app_id,
+            "message": "连续执行几次工具",
+            "requestId": "turn-consecutive-tools",
+        },
+    )
+    history_data = (
+        await app_context.client.get(f"/api/chatHistory/app/{app_id}")
+    ).json()["data"]
+    parts = history_data["partsByTurn"]["turn-consecutive-tools"]
+
+    assert [part["type"] for part in parts] == [
+        "assistant_text",
+        "tool_group",
+        "assistant_text",
+    ]
+    group = parts[1]
+    assert len(group["tools"]) == 3
+    assert len({tool["batchId"] for tool in group["tools"]}) == 3
+    assert [tool["toolName"] for tool in group["tools"]] == [
+        "write_file",
+        "edit_file",
+        "edit_file",
+    ]
+    assert all(tool["status"] == "completed" for tool in group["tools"])
 
 
 async def test_streamed_deltas_are_concatenated_in_persisted_assistant_message(
@@ -572,6 +828,21 @@ async def test_multi_file_generation_writes_three_files_and_previews(
             )
         )
     assert tool_rows == 3
+
+    history_data = (
+        await app_context.client.get(f"/api/chatHistory/app/{app_id}")
+    ).json()["data"]
+    parts = history_data["partsByTurn"]["turn-multi-file"]
+    assert [part["type"] for part in parts] == [
+        "assistant_text",
+        "tool_group",
+        "assistant_text",
+    ]
+    assert [tool["input"]["path"] for tool in parts[1]["tools"]] == [
+        "index.html",
+        "style.css",
+        "script.js",
+    ]
 
 
 class MultiFileEditModel:

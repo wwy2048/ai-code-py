@@ -178,20 +178,29 @@ class AgentTurnExecutor:
                 *history,
                 {"role": "user", "content": prompt},
             ]
-            assistant_round_texts: list[str] = []
-            visible_message_parts: list[str] = []
+            last_round_text = ""
+            final_assistant_text = ""
+            persisted_assistant_text = False
             model_round = 0
 
             async def run_model_rounds() -> None:
-                nonlocal model_round
+                nonlocal model_round, last_round_text, final_assistant_text
+                nonlocal persisted_assistant_text
                 for _ in range(12):
                     model_round += 1
                     batch_id = f"{turn_id}:{model_round}"
                     streamed_parts: list[str] = []
 
-                    async def on_text(delta: str, parts: list[str] = streamed_parts) -> None:
+                    async def on_text(
+                        delta: str,
+                        parts: list[str] = streamed_parts,
+                        current_batch_id: str = batch_id,
+                    ) -> None:
                         parts.append(delta)
-                        await emit("text_delta", {"text": delta})
+                        await emit(
+                            "text_delta",
+                            {"text": delta, "batchId": current_batch_id},
+                        )
 
                     started = perf_counter()
                     self._debug.llm_request(
@@ -239,11 +248,20 @@ class AgentTurnExecutor:
                     )
                     await conversation.commit()
                     round_text = "".join(streamed_parts) if streamed_parts else reply.text
-                    if round_text.strip():
-                        assistant_round_texts.append(round_text.strip())
-                        visible_message_parts.append(round_text.strip())
+                    last_round_text = round_text.strip()
+                    if last_round_text:
+                        # 每轮模型文本独立落库，保留它在工具批次之间的真实顺序。
+                        await conversation.append_assistant(
+                            round_text,
+                            batch_id=batch_id,
+                        )
+                        persisted_assistant_text = True
+                        await conversation.commit()
                     if reply.text and not streamed_parts:
-                        await emit("text_delta", {"text": reply.text})
+                        await emit(
+                            "text_delta",
+                            {"text": reply.text, "batchId": batch_id},
+                        )
                     if reply.stop_reason == "max_tokens":
                         if not reply.tool_calls:
                             raise RuntimeError(
@@ -252,13 +270,14 @@ class AgentTurnExecutor:
                         truncated_results: list[dict[str, Any]] = []
                         for call in reply.tool_calls:
                             self._debug.tool_started(turn_id=turn_id, call=call)
-                            visible_message_parts.append(
-                                f"> 正在执行工具 {call.name}"
-                                + (
-                                    f"：{call.arguments['path']}"
-                                    if isinstance(call.arguments.get("path"), str)
-                                    else ""
-                                )
+                            await emit(
+                                "tool_started",
+                                {
+                                    "toolCallId": call.id,
+                                    "name": call.name,
+                                    "batchId": batch_id,
+                                    **registry.public_input(call),
+                                },
                             )
                             result = ToolExecutionResult(
                                 ok=False,
@@ -272,7 +291,6 @@ class AgentTurnExecutor:
                             await conversation.append_tool_call(
                                 call,
                                 batch_id=batch_id,
-                                assistant_text=reply.text,
                             )
                             await conversation.append_tool_result(
                                 call,
@@ -293,15 +311,13 @@ class AgentTurnExecutor:
                                 {
                                     "toolCallId": call.id,
                                     "name": call.name,
+                                    "batchId": batch_id,
                                     "status": "failed",
                                     "durationMs": 0,
                                     "sizeBytes": None,
                                     "preview": result.output,
                                     **result.public_input,
                                 },
-                            )
-                            visible_message_parts.append(
-                                f"> 工具 {call.name} 失败：{result.output[:300]}"
                             )
                             self._debug.tool_finished(
                                 turn_id=turn_id,
@@ -327,23 +343,30 @@ class AgentTurnExecutor:
                         messages.extend(truncated_results)
                         continue
                     if not reply.tool_calls:
+                        if last_round_text:
+                            final_assistant_text = round_text
+                        else:
+                            final_assistant_text = "页面已生成。"
+                            await conversation.append_assistant(
+                                final_assistant_text,
+                                batch_id=batch_id,
+                            )
+                            persisted_assistant_text = True
+                            await conversation.commit()
+                            await emit(
+                                "text_delta",
+                                {"text": final_assistant_text, "batchId": batch_id},
+                            )
                         return
                     current_results: list[dict[str, Any]] = []
                     for call in reply.tool_calls:
                         self._debug.tool_started(turn_id=turn_id, call=call)
-                        visible_message_parts.append(
-                            f"> 正在执行工具 {call.name}"
-                            + (
-                                f"：{call.arguments['path']}"
-                                if isinstance(call.arguments.get("path"), str)
-                                else ""
-                            )
-                        )
                         await emit(
                             "tool_started",
                             {
                                 "toolCallId": call.id,
                                 "name": call.name,
+                                "batchId": batch_id,
                                 **registry.public_input(call),
                             },
                         )
@@ -359,7 +382,6 @@ class AgentTurnExecutor:
                         await conversation.append_tool_call(
                             call,
                             batch_id=batch_id,
-                            assistant_text=reply.text,
                         )
                         await conversation.append_tool_result(
                             call,
@@ -380,21 +402,13 @@ class AgentTurnExecutor:
                             {
                                 "toolCallId": call.id,
                                 "name": call.name,
+                                "batchId": batch_id,
                                 "status": "completed" if result.ok else "failed",
                                 "durationMs": result.duration_ms,
                                 "sizeBytes": result.size_bytes,
                                 "preview": result.output[:300],
                                 **result.public_input,
                             },
-                        )
-                        status = "完成" if result.ok else "失败"
-                        size = (
-                            f"，{result.size_bytes} 字节"
-                            if result.size_bytes is not None
-                            else ""
-                        )
-                        visible_message_parts.append(
-                            f"> 工具 {call.name} {status}{size}\n> {result.output[:300]}"
                         )
                     messages.append(
                         assistant_tool_calls_message(
@@ -416,15 +430,21 @@ class AgentTurnExecutor:
                     await run_model_rounds()
                     build_result = await asyncio.to_thread(self._vue_builder.build, workspace.root)
                     status = "completed" if build_result.ok else "failed"
+                    build_batch_id = f"{turn_id}:build:{attempt}"
                     await emit(
                         "tool_started",
-                        {"toolCallId": f"final-build-{attempt}", "name": "build_project"},
+                        {
+                            "toolCallId": f"final-build-{attempt}",
+                            "name": "build_project",
+                            "batchId": build_batch_id,
+                        },
                     )
                     await emit(
                         "tool_finished",
                         {
                             "toolCallId": f"final-build-{attempt}",
                             "name": "build_project",
+                            "batchId": build_batch_id,
                             "status": status,
                             "durationMs": 0,
                             "sizeBytes": build_result.dist_size_bytes,
@@ -447,11 +467,14 @@ class AgentTurnExecutor:
             else:
                 await run_model_rounds()
 
-            assistant_text = "\n\n".join(assistant_round_texts).strip() or "页面已生成。"
-            visible_assistant_text = (
-                "\n\n".join(visible_message_parts).strip() or assistant_text
-            )
-            await conversation.append_assistant(visible_assistant_text)
+            # 这里只计算记忆摘要使用的最终文本，绝不再把多轮文本拼接成一条 assistant 历史。
+            assistant_text = final_assistant_text or last_round_text
+            if not assistant_text and not persisted_assistant_text:
+                assistant_text = "页面已生成。"
+                await conversation.append_assistant(
+                    assistant_text,
+                    batch_id=f"{turn_id}:final",
+                )
             if self._memory_enabled:
                 await memory_store.save_from_turn(turn_id, prompt, assistant_text)
             await conversation.commit()
