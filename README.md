@@ -12,6 +12,12 @@ Python 全量重写 ai-code 的后端与 Agent Runtime。
 
 后端 API 前缀为 `/api`，健康检查为 `/api/health/check`。
 
+## 项目文档
+
+- [重构开发复盘](docs/development-retrospective.md)
+- [领域术语](CONTEXT.md)
+- [架构决策记录](docs/adr/)
+
 ## 当前能力
 
 - 用户注册、登录、Redis Session、退出与旧密码升级
