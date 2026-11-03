@@ -44,6 +44,8 @@ class Settings(BaseSettings):
     context_compaction_fixed_overhead_tokens: int = 2000
     model_retry_base_seconds: float = 0.5
     model_max_retries: int = 3
+    agent_max_rounds_per_phase: int = 12
+    agent_max_validation_repairs: int = 3
 
     workspace_root: str = str(_PROJECT_ROOT / "tmp/codeOutput")
     deploy_root: str = str(_PROJECT_ROOT / "tmp/code_deploy")

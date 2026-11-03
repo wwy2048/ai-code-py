@@ -12,7 +12,8 @@ from app.models import ChatHistory
 from app.runtime.agent import AgentTurnExecutor
 from app.runtime.conversation import ConversationStore
 from app.runtime.manager import GenerationManager
-from app.runtime.model import ModelReply, TextEmitter, ToolCall
+from app.runtime.messages import AssistantMessage, ToolResultMessage, UserMessage
+from app.runtime.model import ModelReply, ModelRequest, TextEmitter, ToolCall
 from app.runtime.vue_project import BuildResult, VueProjectBuilder
 
 
@@ -191,29 +192,27 @@ async def test_active_context_projection_keeps_tool_pairs_and_excludes_inactive(
         ).load_active_model_messages()
 
     assert history == [
-        {"role": "user", "content": "初始需求"},
-        {
-            "role": "assistant",
-            "content": "",
-            "tool_calls": [
-                {
-                    "id": "call-write-1",
-                    "name": "write_file",
-                    "arguments": {
+        UserMessage(content="初始需求"),
+        AssistantMessage(
+            content="",
+            tool_calls=(
+                ToolCall(
+                    id="call-write-1",
+                    name="write_file",
+                    arguments={
                         "path": "index.html",
                         "content": "<h1>旧版本</h1>",
                     },
-                }
-            ],
-        },
-        {
-            "role": "tool_result",
-            "tool_call_id": "call-write-1",
-            "name": "write_file",
-            "content": "已写入 index.html",
-            "is_error": False,
-        },
-        {"role": "assistant", "content": "页面已生成。"},
+                ),
+            ),
+        ),
+        ToolResultMessage(
+            tool_call_id="call-write-1",
+            name="write_file",
+            content="已写入 index.html",
+            is_error=False,
+        ),
+        AssistantMessage(content="页面已生成。"),
     ]
 
 
@@ -330,19 +329,19 @@ async def test_visible_history_rejects_other_users_app(app_context: AppContext) 
 class ContextAwareModel:
     def __init__(self, write_path: str) -> None:
         self._write_path = write_path
-        self.requests: list[list[dict[str, Any]]] = []
+        self.requests: list[tuple[object, ...]] = []
 
     async def next_turn(
         self,
-        messages: list[dict[str, Any]],
+        request: ModelRequest,
         on_text: TextEmitter,
     ) -> ModelReply:
-        self.requests.append(copy.deepcopy(messages))
-        if messages[-1].get("role") == "tool_result":
+        self.requests.append(copy.deepcopy(request.messages))
+        if isinstance(request.messages[-1], ToolResultMessage):
             await on_text("处理完成。")
             return ModelReply(text="处理完成。")
 
-        user_count = sum(message.get("role") == "user" for message in messages)
+        user_count = sum(isinstance(message, UserMessage) for message in request.messages)
         version = "initial" if user_count == 1 else "follow-up"
         await on_text(f"写入 {version} 版本。")
         return ModelReply(
@@ -425,7 +424,7 @@ async def test_follow_up_restores_prior_active_context_after_relogin(
     assert '"status": "completed"' in second.text
 
     follow_up = model.requests[2]
-    assert [message["role"] for message in follow_up] == [
+    assert [message.role for message in follow_up] == [
         "user",
         "assistant",
         "tool_result",
@@ -433,17 +432,21 @@ async def test_follow_up_restores_prior_active_context_after_relogin(
         "assistant",
         "user",
     ]
-    assert [call["id"] for call in follow_up[1]["tool_calls"]] == [
+    assistant_message = follow_up[1]
+    assert isinstance(assistant_message, AssistantMessage)
+    assert [call.id for call in assistant_message.tool_calls] == [
         "write-initial",
         "read-initial",
     ]
-    assert follow_up[1]["content"] == "写入 initial 版本。"
-    assert [result["tool_call_id"] for result in follow_up[2:4]] == [
+    assert assistant_message.content == "写入 initial 版本。"
+    result_messages = follow_up[2:4]
+    assert all(isinstance(message, ToolResultMessage) for message in result_messages)
+    assert [message.tool_call_id for message in result_messages] == [
         "write-initial",
         "read-initial",
     ]
-    assert follow_up[-1]["role"] == "user"
-    assert follow_up[-1]["content"] == "把标题改成新版本"
+    assert isinstance(follow_up[-1], UserMessage)
+    assert follow_up[-1].content == "把标题改成新版本"
 
     workspace = Path(app_context.app.state.settings.workspace_root) / (
         f"{code_gen_type.value}_{app_id}"

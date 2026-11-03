@@ -3,19 +3,22 @@ from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any
 
-from app.runtime.messages import assistant_tool_calls_message, tool_result_message, tool_use_block
-from app.runtime.model import AgentModel, ModelReply
+from app.runtime.hooks import HookBus
+from app.runtime.journal import NullTurnJournal
+from app.runtime.loop import AgentLoop, TurnState
+from app.runtime.messages import UserMessage
+from app.runtime.model import AgentModel
 from app.runtime.tools import ToolRegistry
 from app.runtime.workspace import Workspace
 
 SubagentEmitter = Callable[[str, dict[str, Any]], Awaitable[None]]
 _APP_LOCKS: dict[Path, asyncio.Lock] = {}
 _SUMMARY_MAX_CHARS = 4000
-_EVENT_PREVIEW_CHARS = 500
+_EVENT_PREVIEW_CHARS = 300
 
 
 class SubagentRunner:
-    """执行一级、顺序、受控目录内的有界子代理。"""
+    """一级、顺序、受控目录的一次性子代理。"""
 
     def __init__(
         self,
@@ -70,53 +73,39 @@ class SubagentRunner:
     ) -> str:
         await emit("subagent_started", {"turnId": turn_id, "workdir": scope.name})
         model = self._model_factory(self._code_gen_type)
-        registry = ToolRegistry(Workspace(scope))
-        messages: list[dict[str, Any]] = [
-            {
-                "role": "user",
-                "content": (
-                    f"你是受控子代理。只处理指定目录内任务，不得提问或执行 shell。任务：{task}"
-                ),
-            }
-        ]
-        for _ in range(self._max_rounds):
-            reply: ModelReply = await model.next_turn(
-                [{**message, "tools": registry.definitions} for message in messages],
-                lambda _text: asyncio.sleep(0),
-            )
-            if not reply.tool_calls:
-                summary = (reply.text.strip() or "子代理已完成")[:_SUMMARY_MAX_CHARS]
-                await emit(
-                    "subagent_finished",
-                    {"turnId": turn_id, "summary": summary[:_EVENT_PREVIEW_CHARS]},
-                )
-                return summary
-            results = []
-            for call in reply.tool_calls:
-                result = await registry.execute(call)
-                results.append(
-                    tool_result_message(
-                        tool_call_id=call.id,
-                        name=call.name,
-                        content=result.output,
-                        is_error=not result.ok,
+
+        async def ignore_event(event: str, payload: dict[str, Any]) -> None:
+            return None
+
+        loop = AgentLoop(
+            model=model,
+            tools=ToolRegistry(Workspace(scope)),
+            journal=NullTurnJournal(),
+            emit=ignore_event,
+            hooks=HookBus(),
+            max_rounds=self._max_rounds,
+            fallback_text="子代理已完成",
+        )
+        state = TurnState(
+            turn_id=turn_id,
+            messages=[
+                UserMessage(
+                    content=(
+                        "你是受控子代理。只处理指定目录内任务，不得提问或执行 shell。"
+                        f"任务：{task}"
                     )
                 )
-            messages.append(
-                assistant_tool_calls_message(
-                    [
-                        tool_use_block(
-                            tool_call_id=call.id,
-                            name=call.name,
-                            arguments=call.arguments,
-                        )
-                        for call in reply.tool_calls
-                    ],
-                    content=reply.text,
-                )
-            )
-            messages.extend(results)
-        raise ValueError("子代理超过最大执行轮数")
+            ],
+        )
+        result = await loop.run_phase(state)
+        if result.exhausted:
+            raise ValueError("子代理超过最大执行轮数")
+        summary = (result.final_text.strip() or "子代理已完成")[:_SUMMARY_MAX_CHARS]
+        await emit(
+            "subagent_finished",
+            {"turnId": turn_id, "summary": summary[:_EVENT_PREVIEW_CHARS]},
+        )
+        return summary
 
     def _scope(self, workdir: str) -> Path:
         if not workdir or Path(workdir).is_absolute() or ".." in Path(workdir).parts:

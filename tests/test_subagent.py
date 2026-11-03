@@ -4,7 +4,8 @@ from typing import Any
 
 import pytest
 
-from app.runtime.model import ModelReply, TextEmitter, ToolCall
+from app.runtime.messages import ToolResultMessage
+from app.runtime.model import ModelReply, ModelRequest, TextEmitter, ToolCall
 from app.runtime.subagent import SubagentRunner
 from app.runtime.workspace import Workspace
 
@@ -13,7 +14,7 @@ class WritingSubagentModel:
     def __init__(self) -> None:
         self.calls = 0
 
-    async def next_turn(self, messages: list[dict[str, Any]], on_text: TextEmitter) -> ModelReply:
+    async def next_turn(self, request: ModelRequest, on_text: TextEmitter) -> ModelReply:
         self.calls += 1
         if self.calls == 1:
             return ModelReply(
@@ -33,7 +34,7 @@ class NestedSubagentModel:
     def __init__(self) -> None:
         self.calls = 0
 
-    async def next_turn(self, messages: list[dict[str, Any]], on_text: TextEmitter) -> ModelReply:
+    async def next_turn(self, request: ModelRequest, on_text: TextEmitter) -> ModelReply:
         self.calls += 1
         if self.calls == 1:
             return ModelReply(
@@ -45,13 +46,17 @@ class NestedSubagentModel:
                     )
                 ]
             )
-        result = next(message for message in messages if message.get("role") == "tool_result")
-        assert "未知工具: delegate_subagent" in result["content"]
+        result = next(
+            message
+            for message in request.messages
+            if isinstance(message, ToolResultMessage)
+        )
+        assert "未知工具: delegate_subagent" in result.content
         return ModelReply(text="未创建下一级子代理")
 
 
 class SlowSubagentModel:
-    async def next_turn(self, messages: list[dict[str, Any]], on_text: TextEmitter) -> ModelReply:
+    async def next_turn(self, request: ModelRequest, on_text: TextEmitter) -> ModelReply:
         await asyncio.sleep(1)
         return ModelReply(text="太迟")
 
@@ -149,7 +154,7 @@ async def test_subagent_concurrent_run_is_rejected(tmp_path: Path) -> None:
 
         async def next_turn(
             self,
-            messages: list[dict[str, Any]],
+            request: ModelRequest,
             on_text: TextEmitter,
         ) -> ModelReply:
             self.started.set()
@@ -180,13 +185,13 @@ async def test_subagent_stops_at_max_rounds(tmp_path: Path) -> None:
     class AlwaysToolModel:
         async def next_turn(
             self,
-            messages: list[dict[str, Any]],
+            request: ModelRequest,
             on_text: TextEmitter,
         ) -> ModelReply:
             return ModelReply(
                 tool_calls=[
                     ToolCall(
-                        id=f"write-{len(messages)}",
+                        id=f"write-{len(request.messages)}",
                         name="write_file",
                         arguments={"path": "loop.txt", "content": "loop"},
                     )

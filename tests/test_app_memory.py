@@ -1,5 +1,4 @@
 from pathlib import Path
-from typing import Any
 
 from conftest import AppContext
 from sqlalchemy import func, select
@@ -8,7 +7,8 @@ from app.models import AppMemory
 from app.runtime.agent import AgentTurnExecutor
 from app.runtime.manager import GenerationManager
 from app.runtime.memory import MemoryStore
-from app.runtime.model import ModelReply, TextEmitter, ToolCall
+from app.runtime.messages import ToolResultMessage, UserMessage
+from app.runtime.model import ModelReply, ModelRequest, TextEmitter, ToolCall
 
 
 async def _register_login_and_create_app(app_context: AppContext, account: str) -> tuple[int, int]:
@@ -36,15 +36,15 @@ async def _register_login_and_create_app(app_context: AppContext, account: str) 
 
 class MemoryCaptureModel:
     def __init__(self) -> None:
-        self.requests: list[list[dict[str, Any]]] = []
+        self.requests: list[tuple[object, ...]] = []
 
     async def next_turn(
         self,
-        messages: list[dict[str, Any]],
+        request: ModelRequest,
         on_text: TextEmitter,
     ) -> ModelReply:
-        self.requests.append(messages)
-        if messages[-1].get("role") == "tool_result":
+        self.requests.append(request.messages)
+        if isinstance(request.messages[-1], ToolResultMessage):
             return ModelReply(text="完成")
         return ModelReply(
             text="写入",
@@ -118,9 +118,9 @@ async def test_memory_is_isolated_budgeted_and_not_injected_when_disabled(
         json={"appId": first_app, "message": "使用记忆继续", "requestId": "memory-on"},
     )
     first_message = enabled_model.requests[0][0]
-    assert first_message["role"] == "user"
-    assert "应用持久记忆" in first_message["content"]
-    assert "蓝色主题" in first_message["content"]
+    assert isinstance(first_message, UserMessage)
+    assert "应用持久记忆" in first_message.content
+    assert "蓝色主题" in first_message.content
 
 
 async def test_memory_api_owner_clear_and_app_delete_cleanup(app_context: AppContext) -> None:

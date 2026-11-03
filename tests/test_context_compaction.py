@@ -13,9 +13,11 @@ from app.runtime.anthropic_model import AnthropicHtmlModel
 from app.runtime.compaction import ContextCompactor
 from app.runtime.conversation import ConversationStore, MessageKind
 from app.runtime.manager import GenerationManager
+from app.runtime.messages import AssistantMessage, ToolResultMessage, UserMessage
 from app.runtime.model import (
     ModelCallStatus,
     ModelReply,
+    ModelRequest,
     SummaryResult,
     TextEmitter,
     ToolCall,
@@ -208,9 +210,9 @@ async def test_compaction_triggers_at_budget_boundary_and_keeps_recent_turn(
     assert [event for event, _ in events] == ["compaction", "compaction"]
     assert [data["status"] for _, data in events] == ["started", "completed"]
     assert active_messages == [
-        {"role": "user", "content": "[会话压缩摘要]\nsummary-1"},
-        {"role": "user", "content": "user-turn-2"},
-        {"role": "assistant", "content": "assistant-turn-2"},
+        UserMessage(content="[会话压缩摘要]\nsummary-1"),
+        UserMessage(content="user-turn-2"),
+        AssistantMessage(content="assistant-turn-2"),
     ]
 
     async with app_context.session_factory() as session:
@@ -309,9 +311,9 @@ async def test_second_compaction_updates_summary_without_resummarizing_covered_t
     assert "user-turn-2" not in str(summarizer.calls[1]["transcript"])
     assert "user-turn-3" in str(summarizer.calls[1]["transcript"])
     assert active_messages == [
-        {"role": "user", "content": "[会话压缩摘要]\nsummary-2"},
-        {"role": "user", "content": "user-turn-4"},
-        {"role": "assistant", "content": "assistant-turn-4"},
+        UserMessage(content="[会话压缩摘要]\nsummary-2"),
+        UserMessage(content="user-turn-4"),
+        AssistantMessage(content="assistant-turn-4"),
     ]
 
     async with app_context.session_factory() as session:
@@ -577,10 +579,9 @@ async def test_compaction_runs_through_anthropic_transport_and_persists_summary(
     assert outcome.compacted is True
     assert client.messages.request is not None
     assert "tools" not in client.messages.request
-    assert active_messages[0] == {
-        "role": "user",
-        "content": "[会话压缩摘要]\ntransport-summary",
-    }
+    assert active_messages[0] == UserMessage(
+        content="[会话压缩摘要]\ntransport-summary"
+    )
     async with app_context.session_factory() as session:
         summary_log = await session.scalar(
             select(ModelCallLog).where(
@@ -638,10 +639,10 @@ async def test_compaction_failure_keeps_original_active_context(app_context: App
     assert outcome.compacted is False
     assert [event["status"] for event in events] == ["started", "failed"]
     assert active_messages == [
-        {"role": "user", "content": "user-turn-1"},
-        {"role": "assistant", "content": "assistant-turn-1"},
-        {"role": "user", "content": "user-turn-2"},
-        {"role": "assistant", "content": "assistant-turn-2"},
+        UserMessage(content="user-turn-1"),
+        AssistantMessage(content="assistant-turn-1"),
+        UserMessage(content="user-turn-2"),
+        AssistantMessage(content="assistant-turn-2"),
     ]
     async with app_context.session_factory() as session:
         summary_log = await session.scalar(
@@ -659,7 +660,7 @@ class CompactionAgentModel:
     model_name = "agent-model"
 
     def __init__(self) -> None:
-        self.requests: list[list[dict[str, Any]]] = []
+        self.requests: list[tuple[object, ...]] = []
         self.summary_calls: list[dict[str, str | None]] = []
 
     async def summarize(
@@ -678,11 +679,11 @@ class CompactionAgentModel:
 
     async def next_turn(
         self,
-        messages: list[dict[str, Any]],
+        request: ModelRequest,
         on_text: TextEmitter,
     ) -> ModelReply:
-        self.requests.append(messages)
-        if messages[-1].get("role") == "tool_result":
+        self.requests.append(request.messages)
+        if isinstance(request.messages[-1], ToolResultMessage):
             await on_text("完成。")
             return ModelReply(text="完成。")
         await on_text("写入页面。")
@@ -740,10 +741,12 @@ async def test_agent_emits_compaction_events_and_continues_with_summary_context(
     assert '"status": "completed"' in response.text
     assert response.text.count("event: compaction") == 2
     assert model.summary_calls
-    assert model.requests[0][0]["role"] == "user"
-    assert model.requests[0][0]["content"] == "[会话压缩摘要]\nsummary-from-agent"
-    assert model.requests[0][-1]["role"] == "user"
-    assert model.requests[0][-1]["content"] == "继续修改"
+    first_message = model.requests[0][0]
+    last_message = model.requests[0][-1]
+    assert isinstance(first_message, UserMessage)
+    assert first_message.content == "[会话压缩摘要]\nsummary-from-agent"
+    assert isinstance(last_message, UserMessage)
+    assert last_message.content == "继续修改"
     assert all("user-turn-1" not in str(message) for message in model.requests[0])
     async with app_context.session_factory() as session:
         summary_record = await session.scalar(

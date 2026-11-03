@@ -8,6 +8,7 @@ from typing import Any
 
 from app.models import ChatHistory
 from app.runtime.conversation import ConversationStore, MessageKind, project_model_messages
+from app.runtime.messages import AgentMessage, UserMessage, messages_to_dicts
 from app.runtime.model import ContextSummarizer, ModelCallStatus, SummaryResult
 
 logger = logging.getLogger(__name__)
@@ -58,7 +59,7 @@ class ContextCompactor:
             observed_tokens = provider_usage + _estimate_text_tokens(pending_text)
         else:
             projected = project_model_messages(active_records)
-            projected.append({"role": "user", "content": pending_text})
+            projected.append(UserMessage(content=pending_text))
             observed_tokens = self._fixed_overhead_tokens + _estimate_messages_tokens(projected)
 
         if observed_tokens < self._threshold_tokens:
@@ -104,7 +105,7 @@ class ContextCompactor:
                 if record.message_kind != MessageKind.COMPACTION
             ]
             transcript = json.dumps(
-                project_model_messages(transcript_records),
+                messages_to_dicts(project_model_messages(transcript_records)),
                 ensure_ascii=False,
                 separators=(",", ":"),
             )
@@ -229,8 +230,12 @@ def _is_complete_turn(records: list[ChatHistory]) -> bool:
     )
 
 
-def _estimate_messages_tokens(messages: list[dict[str, Any]]) -> int:
-    serialized = json.dumps(messages, ensure_ascii=False, separators=(",", ":"))
+def _estimate_messages_tokens(messages: list[AgentMessage]) -> int:
+    serialized = json.dumps(
+        messages_to_dicts(messages),
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
     return _estimate_text_tokens(serialized)
 
 

@@ -92,6 +92,8 @@ def create_app(
         subagent_timeout_seconds=app_settings.subagent_timeout_seconds,
         agent_debug_log_enabled=app_settings.agent_debug_log_enabled,
         agent_debug_log_max_chars=app_settings.agent_debug_log_max_chars,
+        max_rounds_per_phase=app_settings.agent_max_rounds_per_phase,
+        max_validation_repairs=app_settings.agent_max_validation_repairs,
     )
     app.state.generation_manager = GenerationManager(turn_executor)
 

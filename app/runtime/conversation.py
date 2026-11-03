@@ -8,11 +8,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models import ChatHistory, ModelCallLog
 from app.redaction import sanitize_sensitive_text
 from app.runtime.messages import (
-    assistant_tool_calls_message,
-    tool_result_message,
-    tool_use_block,
+    AgentMessage,
+    AssistantMessage,
+    ToolCall,
+    ToolResultMessage,
+    UserMessage,
 )
-from app.runtime.model import ModelCallStatus, ToolCall
+from app.runtime.model import ModelCallStatus
 from app.runtime.tools import ToolExecutionResult
 
 
@@ -65,8 +67,8 @@ class ConversationStore:
             visible=True,
         )
 
-    async def load_active_model_messages(self) -> list[dict[str, Any]]:
-        """加载当前 App 仍生效的运行时消息，并投影为模型协议消息。"""
+    async def load_active_model_messages(self) -> list[AgentMessage]:
+        """加载当前 App 仍生效的运行时消息，并投影为类型化模型消息。"""
         records = await self.load_active_records()
         summary_records = [
             record for record in records if record.message_kind == MessageKind.COMPACTION
@@ -270,8 +272,8 @@ def _call_arguments(record: ChatHistory) -> dict[str, Any]:
     return cast(dict[str, Any], arguments) if isinstance(arguments, dict) else {}
 
 
-def project_model_messages(records: list[ChatHistory]) -> list[dict[str, Any]]:
-    """把有序事件投影为模型协议消息，并保持 assistant 文本与工具批次配对。"""
+def project_model_messages(records: list[ChatHistory]) -> list[AgentMessage]:
+    """把有序事件投影为类型化模型消息，并保持 assistant 文本与工具批次配对。"""
     result_by_call: dict[tuple[str | None, str], ChatHistory] = {}
     calls_by_batch: dict[tuple[str | None, str], list[ChatHistory]] = {}
     assistant_text_by_batch: dict[tuple[str | None, str], str] = {}
@@ -305,7 +307,7 @@ def project_model_messages(records: list[ChatHistory]) -> list[dict[str, Any]]:
         if completed_calls(calls)
     }
 
-    projected: list[dict[str, Any]] = []
+    projected: list[AgentMessage] = []
     emitted_batches: set[tuple[str | None, str]] = set()
     for record in records:
         if record.message_kind == MessageKind.TOOL_CALL:
@@ -319,22 +321,22 @@ def project_model_messages(records: list[ChatHistory]) -> list[dict[str, Any]]:
                 if not content:
                     content = str((batch_calls[0].payload or {}).get("assistantText") or "")
                 projected.append(
-                    assistant_tool_calls_message(
-                        [
-                            tool_use_block(
-                                tool_call_id=call.tool_call_id or "",
+                    AssistantMessage(
+                        content=content,
+                        tool_calls=tuple(
+                            ToolCall(
+                                id=call.tool_call_id or "",
                                 name=call.tool_name or "",
                                 arguments=_call_arguments(call),
                             )
                             for call in batch_calls
-                        ],
-                        content=content,
+                        ),
                     )
                 )
                 for call in batch_calls:
                     result = result_by_call[(call.turn_id, call.tool_call_id or "")]
                     projected.append(
-                        tool_result_message(
+                        ToolResultMessage(
                             tool_call_id=call.tool_call_id or "",
                             name=call.tool_name,
                             content=result.message,
@@ -348,19 +350,19 @@ def project_model_messages(records: list[ChatHistory]) -> list[dict[str, Any]]:
             if legacy_result is None or not record.tool_call_id:
                 continue
             projected.append(
-                assistant_tool_calls_message(
-                    [
-                        tool_use_block(
-                            tool_call_id=record.tool_call_id,
+                AssistantMessage(
+                    content=str((record.payload or {}).get("assistantText") or ""),
+                    tool_calls=(
+                        ToolCall(
+                            id=record.tool_call_id,
                             name=record.tool_name or "",
                             arguments=_call_arguments(record),
-                        )
-                    ],
-                    content=str((record.payload or {}).get("assistantText") or ""),
+                        ),
+                    ),
                 )
             )
             projected.append(
-                tool_result_message(
+                ToolResultMessage(
                     tool_call_id=record.tool_call_id,
                     name=record.tool_name,
                     content=legacy_result.message,
@@ -370,18 +372,18 @@ def project_model_messages(records: list[ChatHistory]) -> list[dict[str, Any]]:
         elif record.message_kind == MessageKind.TOOL_RESULT:
             continue
         elif record.message_kind == MessageKind.USER:
-            projected.append({"role": "user", "content": record.message})
+            projected.append(UserMessage(content=record.message))
         elif record.message_kind == MessageKind.ASSISTANT:
             batch_key = _record_batch_key(record)
             if batch_key in projectable_batches:
                 # 该轮文本已合并到紧随其后的 assistant tool_calls 消息中。
                 continue
-            projected.append({"role": "assistant", "content": record.message})
+            projected.append(AssistantMessage(content=record.message))
         elif record.message_kind == MessageKind.COMPACTION:
-            projected.append({"role": "user", "content": f"[会话压缩摘要]\n{record.message}"})
+            projected.append(UserMessage(content=f"[会话压缩摘要]\n{record.message}"))
         elif record.message_kind == "legacy":
             if record.message_type == MessageType.USER:
-                projected.append({"role": "user", "content": record.message})
+                projected.append(UserMessage(content=record.message))
             elif record.message_type == MessageType.AI:
-                projected.append({"role": "assistant", "content": record.message})
+                projected.append(AssistantMessage(content=record.message))
     return projected

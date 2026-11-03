@@ -3,7 +3,7 @@ from pathlib import Path
 import pytest
 
 from app.runtime.model import ToolCall
-from app.runtime.tools import ToolRegistry
+from app.runtime.tools import ToolExtension, ToolRegistry
 from app.runtime.workspace import Workspace
 
 
@@ -81,3 +81,35 @@ async def test_tool_registry_enforces_code_gen_type_write_whitelist(
     assert result.ok is False
     assert "不允许写入" in result.output
     assert not (tmp_path / "package.json").exists()
+
+
+async def test_tool_extension_adds_schema_and_handler_without_global_registration(
+    tmp_path: Path,
+) -> None:
+    async def echo(arguments: dict) -> tuple[str, int]:
+        text = str(arguments["text"])
+        return f"echo:{text}", len(text)
+
+    extension = ToolExtension(
+        definitions=(
+            {
+                "name": "echo",
+                "description": "回显文本",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {"text": {"type": "string"}},
+                    "required": ["text"],
+                },
+            },
+        ),
+        handlers={"echo": echo},
+    )
+    registry = ToolRegistry.with_extension(Workspace(tmp_path), extension)
+
+    result = await registry.execute(
+        ToolCall(id="echo-call", name="echo", arguments={"text": "hello"})
+    )
+
+    assert result.ok is True
+    assert result.output == "echo:hello"
+    assert [definition["name"] for definition in registry.definitions][-1] == "echo"

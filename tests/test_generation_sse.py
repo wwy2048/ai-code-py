@@ -1,7 +1,6 @@
 import asyncio
 import json
 from pathlib import Path
-from typing import Any
 
 from conftest import AppContext, StaticCodeGenTypeRouter
 from sqlalchemy import func, select
@@ -10,8 +9,10 @@ from app.codegen_router import CodeGenType
 from app.models import ChatHistory, ModelCallLog
 from app.runtime.agent import AgentTurnExecutor
 from app.runtime.manager import GenerationManager
+from app.runtime.messages import ToolResultMessage, UserMessage
 from app.runtime.model import (
     ModelReply,
+    ModelRequest,
     ScriptedMultiFileModel,
     ScriptedVueModel,
     TextEmitter,
@@ -242,8 +243,8 @@ async def test_generation_continues_without_an_active_subscriber(
 
 
 class PathEscapeModel:
-    async def next_turn(self, messages: list[dict[str, Any]], on_text: TextEmitter) -> ModelReply:
-        if any(message.get("role") == "tool_result" for message in messages):
+    async def next_turn(self, request: ModelRequest, on_text: TextEmitter) -> ModelReply:
+        if any(isinstance(message, ToolResultMessage) for message in request.messages):
             await on_text("越界工具已处理。")
             return ModelReply(text="越界工具已处理。")
         await on_text("尝试越界写入。")
@@ -301,7 +302,7 @@ async def test_path_escape_is_reported_as_failed_tool_without_writing(
 
 
 class FailingModel:
-    async def next_turn(self, messages: list[dict[str, Any]], on_text: TextEmitter) -> ModelReply:
+    async def next_turn(self, request: ModelRequest, on_text: TextEmitter) -> ModelReply:
         raise RuntimeError("包含内部细节的模型错误")
 
 
@@ -346,7 +347,7 @@ class RecoveringToolModel:
 
     async def next_turn(
         self,
-        messages: list[dict[str, Any]],
+        request: ModelRequest,
         on_text: TextEmitter,
     ) -> ModelReply:
         self.calls += 1
@@ -359,9 +360,11 @@ class RecoveringToolModel:
                 ],
             )
         tool_result = next(
-            message for message in reversed(messages) if message.get("role") == "tool_result"
+            message
+            for message in reversed(request.messages)
+            if isinstance(message, ToolResultMessage)
         )
-        assert tool_result["is_error"] is True
+        assert tool_result.is_error is True
         await on_text("已收到错误并修正。")
         return ModelReply(
             text="已收到错误并修正。",
@@ -381,7 +384,7 @@ class TruncatedToolCallModel:
 
     async def next_turn(
         self,
-        messages: list[dict[str, Any]],
+        request: ModelRequest,
         on_text: TextEmitter,
     ) -> ModelReply:
         self.calls += 1
@@ -400,10 +403,12 @@ class TruncatedToolCallModel:
             )
         if self.calls == 2:
             failed = next(
-                message for message in reversed(messages) if message.get("role") == "tool_result"
+                message
+                for message in reversed(request.messages)
+                if isinstance(message, ToolResultMessage)
             )
-            assert failed["is_error"] is True
-            assert "max_tokens" in failed["content"]
+            assert failed.is_error is True
+            assert "max_tokens" in failed.content
             return ModelReply(
                 tool_calls=[
                     ToolCall(
@@ -419,7 +424,7 @@ class TruncatedToolCallModel:
 class DeltaStreamingModel:
     async def next_turn(
         self,
-        messages: list[dict[str, Any]],
+        request: ModelRequest,
         on_text: TextEmitter,
     ) -> ModelReply:
         await on_text("你好")
@@ -433,7 +438,7 @@ class TwoBatchModel:
 
     async def next_turn(
         self,
-        messages: list[dict[str, Any]],
+        request: ModelRequest,
         on_text: TextEmitter,
     ) -> ModelReply:
         self.calls += 1
@@ -556,7 +561,7 @@ class ConsecutiveToolRoundsModel:
 
     async def next_turn(
         self,
-        messages: list[dict[str, Any]],
+        request: ModelRequest,
         on_text: TextEmitter,
     ) -> ModelReply:
         self.calls += 1
@@ -848,14 +853,14 @@ async def test_multi_file_generation_writes_three_files_and_previews(
 class MultiFileEditModel:
     async def next_turn(
         self,
-        messages: list[dict[str, Any]],
+        request: ModelRequest,
         on_text: TextEmitter,
     ) -> ModelReply:
-        has_tool_result = messages[-1].get("role") == "tool_result"
+        has_tool_result = isinstance(request.messages[-1], ToolResultMessage)
         prompt = next(
-            str(message.get("content", ""))
-            for message in reversed(messages)
-            if message.get("role") == "user"
+            message.content
+            for message in reversed(request.messages)
+            if isinstance(message, UserMessage)
         )
         if has_tool_result:
             await on_text("处理完成。")
@@ -876,7 +881,7 @@ class MultiFileEditModel:
                     )
                 ],
             )
-        return await ScriptedMultiFileModel().next_turn(messages, on_text)
+        return await ScriptedMultiFileModel().next_turn(request, on_text)
 
 
 async def test_multi_file_follow_up_edits_existing_files(

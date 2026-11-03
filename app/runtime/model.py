@@ -3,15 +3,18 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any, Protocol, runtime_checkable
 
-
-@dataclass(frozen=True)
-class ToolCall:
-    id: str
-    name: str
-    arguments: dict[str, Any]
-
+from app.runtime.messages import AgentMessage, ToolCall, ToolResultMessage, UserMessage
 
 TextEmitter = Callable[[str], Awaitable[None]]
+
+
+@dataclass(frozen=True)
+class ModelRequest:
+    """provider-neutral 的一次模型调用请求。"""
+
+    messages: tuple[AgentMessage, ...]
+    tools: tuple[dict[str, Any], ...] = ()
+    model_name: str = ""
 
 
 @dataclass(frozen=True)
@@ -49,7 +52,7 @@ class ModelCallError(RuntimeError):
 class AgentModel(Protocol):
     async def next_turn(
         self,
-        messages: list[dict[str, Any]],
+        request: ModelRequest,
         on_text: TextEmitter,
     ) -> ModelReply: ...
 
@@ -68,23 +71,25 @@ class ContextSummarizer(Protocol):
 
 
 class ScriptedHtmlModel:
-    """Ticket 03 使用的确定性模型，产出单页 HTML。"""
+    """确定性 HTML 模型，用于外部行为测试。"""
 
     async def next_turn(
         self,
-        messages: list[dict[str, Any]],
+        request: ModelRequest,
         on_text: TextEmitter,
     ) -> ModelReply:
-        has_tool_result = messages[-1].get("role") == "tool_result"
+        has_tool_result = bool(
+            request.messages and isinstance(request.messages[-1], ToolResultMessage)
+        )
         if has_tool_result:
             text = "页面已生成，可以直接在右侧预览。"
             await on_text(text)
             return ModelReply(text=text)
 
         prompt = next(
-            str(message.get("content", ""))
-            for message in reversed(messages)
-            if message.get("role") == "user"
+            message.content
+            for message in reversed(request.messages)
+            if isinstance(message, UserMessage)
         )
         escaped_prompt = (
             prompt.replace("&", "&amp;")
@@ -135,7 +140,7 @@ class UnavailableAgentModel:
 
     async def next_turn(
         self,
-        messages: list[dict[str, Any]],
+        request: ModelRequest,
         on_text: TextEmitter,
     ) -> ModelReply:
         raise RuntimeError("未配置 ANTHROPIC_API_KEY，无法调用生成模型")
@@ -146,10 +151,12 @@ class ScriptedMultiFileModel:
 
     async def next_turn(
         self,
-        messages: list[dict[str, Any]],
+        request: ModelRequest,
         on_text: TextEmitter,
     ) -> ModelReply:
-        has_tool_result = messages[-1].get("role") == "tool_result"
+        has_tool_result = bool(
+            request.messages and isinstance(request.messages[-1], ToolResultMessage)
+        )
         if has_tool_result:
             text = "多文件页面已生成。"
             await on_text(text)
@@ -187,10 +194,17 @@ class ScriptedMultiFileModel:
 
 
 class ScriptedVueModel:
-    async def next_turn(self, messages: list[dict[str, Any]], on_text: TextEmitter) -> ModelReply:
-        results = [m for m in messages if m.get("role") == "tool_result"]
+    async def next_turn(
+        self,
+        request: ModelRequest,
+        on_text: TextEmitter,
+    ) -> ModelReply:
+        results = [
+            message for message in request.messages if isinstance(message, ToolResultMessage)
+        ]
         if any(
-            "构建失败" in str(m.get("content", "")) for m in messages if m.get("role") == "user"
+            isinstance(message, UserMessage) and "构建失败" in message.content
+            for message in request.messages
         ):
             text = "根据构建错误修复组件。"
             await on_text(text)
@@ -207,7 +221,7 @@ class ScriptedVueModel:
                     )
                 ],
             )
-        if any(m.get("name") == "build_project" for m in results):
+        if any(message.name == "build_project" for message in results):
             text = "Vue 页面已构建。"
             await on_text(text)
             return ModelReply(text=text)

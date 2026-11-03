@@ -12,8 +12,15 @@ from anthropic import (
 )
 
 from app.config import Settings
-from app.runtime.model import ModelCallError, ModelReply, SummaryResult, TextEmitter, ToolCall
-from app.runtime.tools import TOOL_DEFINITIONS
+from app.runtime.messages import AgentMessage, AssistantMessage, ToolResultMessage, UserMessage
+from app.runtime.model import (
+    ModelCallError,
+    ModelReply,
+    ModelRequest,
+    SummaryResult,
+    TextEmitter,
+    ToolCall,
+)
 
 
 class AnthropicCodeModel:
@@ -47,13 +54,9 @@ class AnthropicCodeModel:
 
     async def next_turn(
         self,
-        messages: list[dict[str, Any]],
+        request: ModelRequest,
         on_text: TextEmitter,
     ) -> ModelReply:
-        tools = next(
-            (message["tools"] for message in reversed(messages) if "tools" in message),
-            TOOL_DEFINITIONS,
-        )
         emitted = False
         for attempt in range(self._max_retries):
             try:
@@ -61,8 +64,8 @@ class AnthropicCodeModel:
                     model=self._model,
                     max_tokens=self._max_tokens,
                     system=self._system_prompt,
-                    messages=cast(Any, self._to_api_messages(messages)),
-                    tools=cast(Any, tools),
+                    messages=cast(Any, self._to_api_messages(request.messages)),
+                    tools=cast(Any, list(request.tools)),
                 ) as stream:
                     async for delta in stream.text_stream:
                         if delta:
@@ -165,7 +168,7 @@ class AnthropicCodeModel:
         )
 
     @staticmethod
-    def _to_api_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    def _to_api_messages(messages: tuple[AgentMessage, ...]) -> list[dict[str, Any]]:
         api_messages: list[dict[str, Any]] = []
         pending_tool_results: list[dict[str, Any]] = []
 
@@ -175,32 +178,30 @@ class AnthropicCodeModel:
                 pending_tool_results.clear()
 
         for message in messages:
-            role = message.get("role")
-            if role == "tool_result":
+            if isinstance(message, ToolResultMessage):
                 block: dict[str, Any] = {
                     "type": "tool_result",
-                    "tool_use_id": message.get("tool_call_id"),
-                    "content": str(message.get("content", "")),
+                    "tool_use_id": message.tool_call_id,
+                    "content": message.content,
                 }
-                if message.get("is_error"):
+                if message.is_error:
                     block["is_error"] = True
                 pending_tool_results.append(block)
                 continue
             flush_tool_results()
-            if role == "user":
-                api_messages.append({"role": "user", "content": message.get("content", "")})
-            elif role == "assistant":
+            if isinstance(message, UserMessage):
+                api_messages.append({"role": "user", "content": message.content})
+            elif isinstance(message, AssistantMessage):
                 content: list[dict[str, Any]] = []
-                text = str(message.get("content", ""))
-                if text:
-                    content.append({"type": "text", "text": text})
-                for call in message.get("tool_calls", []):
+                if message.content:
+                    content.append({"type": "text", "text": message.content})
+                for call in message.tool_calls:
                     content.append(
                         {
                             "type": "tool_use",
-                            "id": call["id"],
-                            "name": call["name"],
-                            "input": call["arguments"],
+                            "id": call.id,
+                            "name": call.name,
+                            "input": call.arguments,
                         }
                     )
                 api_messages.append({"role": "assistant", "content": content})

@@ -6,7 +6,8 @@ from typing import Any
 
 from app.config import Settings
 from app.runtime.anthropic_model import AnthropicHtmlModel
-from app.runtime.model import ModelCallError
+from app.runtime.messages import AssistantMessage, ToolCall, ToolResultMessage, UserMessage
+from app.runtime.model import ModelCallError, ModelRequest
 
 
 class FakeStream:
@@ -69,6 +70,10 @@ def _settings() -> Settings:
     )
 
 
+def _request(*messages: object, tools: tuple[dict[str, Any], ...] = ()) -> ModelRequest:
+    return ModelRequest(messages=messages, tools=tools)  # type: ignore[arg-type]
+
+
 async def test_anthropic_html_model_streams_text_and_returns_tool_call() -> None:
     final = SimpleNamespace(
         content=[
@@ -89,7 +94,7 @@ async def test_anthropic_html_model_streams_text_and_returns_tool_call() -> None
     async def on_text(text: str) -> None:
         deltas.append(text)
 
-    reply = await model.next_turn([{"role": "user", "content": "创建页面"}], on_text)
+    reply = await model.next_turn(_request(UserMessage(content="创建页面")), on_text)
 
     assert deltas == ["我将", "创建页面。"]
     assert reply.text == "我将创建页面。"
@@ -111,7 +116,7 @@ async def test_anthropic_html_model_retries_timeout_before_streaming() -> None:
     async def on_text(text: str) -> None:
         return None
 
-    reply = await model.next_turn([{"role": "user", "content": "创建"}], on_text)
+    reply = await model.next_turn(_request(UserMessage(content="创建")), on_text)
 
     assert reply.text == "完成"
     assert reply.retry_count == 1
@@ -130,27 +135,25 @@ async def test_anthropic_html_model_maps_tool_result_into_user_message() -> None
         return None
 
     await model.next_turn(
-        [
-            {"role": "user", "content": "创建页面"},
-            {
-                "role": "assistant",
-                "content": "调用工具",
-                "tool_calls": [
-                    {
-                        "id": "call-1",
-                        "name": "write_file",
-                        "arguments": {"path": "index.html", "content": "<h1>x</h1>"},
-                    }
-                ],
-            },
-            {
-                "role": "tool_result",
-                "tool_call_id": "call-1",
-                "name": "write_file",
-                "content": "写入失败",
-                "is_error": True,
-            },
-        ],
+        _request(
+            UserMessage(content="创建页面"),
+            AssistantMessage(
+                content="调用工具",
+                tool_calls=(
+                    ToolCall(
+                        id="call-1",
+                        name="write_file",
+                        arguments={"path": "index.html", "content": "<h1>x</h1>"},
+                    ),
+                ),
+            ),
+            ToolResultMessage(
+                tool_call_id="call-1",
+                name="write_file",
+                content="写入失败",
+                is_error=True,
+            ),
+        ),
         on_text,
     )
 
@@ -197,7 +200,7 @@ async def test_anthropic_model_uses_dynamic_tools_from_runtime_messages() -> Non
         return None
 
     await model.next_turn(
-        [{"role": "user", "content": "委派", "tools": dynamic_tools}],
+        _request(UserMessage(content="委派"), tools=tuple(dynamic_tools)),
         on_text,
     )
 
@@ -218,7 +221,7 @@ async def test_anthropic_model_reports_max_tokens_stop_reason() -> None:
     async def on_text(text: str) -> None:
         return None
 
-    reply = await model.next_turn([{"role": "user", "content": "创建"}], on_text)
+    reply = await model.next_turn(_request(UserMessage(content="创建")), on_text)
 
     assert reply.stop_reason == "max_tokens"
     assert reply.output_tokens == 8000
@@ -243,7 +246,7 @@ async def test_anthropic_html_model_does_not_retry_after_text_was_emitted() -> N
         return None
 
     try:
-        await model.next_turn([{"role": "user", "content": "创建"}], on_text)
+        await model.next_turn(_request(UserMessage(content="创建")), on_text)
     except ModelCallError as exc:
         assert exc.summary == "connection"
         assert exc.retry_count == 0
@@ -267,7 +270,7 @@ async def test_anthropic_html_model_reports_retries_after_exhaustion() -> None:
         return None
 
     try:
-        await model.next_turn([{"role": "user", "content": "创建"}], on_text)
+        await model.next_turn(_request(UserMessage(content="创建")), on_text)
     except ModelCallError as exc:
         assert exc.retry_count == 1
     else:

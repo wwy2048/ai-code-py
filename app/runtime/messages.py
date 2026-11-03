@@ -1,41 +1,71 @@
-from typing import Any
+from dataclasses import dataclass, field
+from typing import Any, Literal
 
 
-def tool_use_block(
-    *,
-    tool_call_id: str,
-    name: str,
-    arguments: dict[str, Any],
-) -> dict[str, Any]:
-    """构造模型协议中的单个 tool_use 块。"""
-    return {"id": tool_call_id, "name": name, "arguments": arguments}
+@dataclass(frozen=True, slots=True)
+class ToolCall:
+    """模型请求执行的一次工具调用。"""
+
+    id: str
+    name: str
+    arguments: dict[str, Any]
 
 
-def assistant_tool_calls_message(
-    tool_calls: list[dict[str, Any]],
-    *,
-    content: str,
-) -> dict[str, Any]:
-    """构造模型协议中的 assistant 工具调用消息。"""
-    return {
-        "role": "assistant",
-        "content": content,
-        "tool_calls": tool_calls,
-    }
+@dataclass(frozen=True, slots=True)
+class UserMessage:
+    """进入模型上下文的用户消息。"""
+
+    content: str
+    role: Literal["user"] = field(default="user", init=False)
 
 
-def tool_result_message(
-    *,
-    tool_call_id: str,
-    name: str | None,
-    content: str,
-    is_error: bool,
-) -> dict[str, Any]:
-    """构造模型协议中的工具结果消息。"""
+@dataclass(frozen=True, slots=True)
+class AssistantMessage:
+    """带可选工具调用的助手消息。"""
+
+    content: str = ""
+    tool_calls: tuple[ToolCall, ...] = ()
+    role: Literal["assistant"] = field(default="assistant", init=False)
+
+
+@dataclass(frozen=True, slots=True)
+class ToolResultMessage:
+    """回填给模型的工具结果。"""
+
+    tool_call_id: str
+    name: str | None
+    content: str
+    is_error: bool = False
+    role: Literal["tool_result"] = field(default="tool_result", init=False)
+
+
+type AgentMessage = UserMessage | AssistantMessage | ToolResultMessage
+
+
+def message_to_dict(message: AgentMessage) -> dict[str, Any]:
+    """把类型化运行时消息转换成调试或压缩使用的普通字典。"""
+    if isinstance(message, UserMessage):
+        return {"role": "user", "content": message.content}
+    if isinstance(message, AssistantMessage):
+        return {
+            "role": "assistant",
+            "content": message.content,
+            "tool_calls": [
+                {"id": call.id, "name": call.name, "arguments": call.arguments}
+                for call in message.tool_calls
+            ],
+        }
     return {
         "role": "tool_result",
-        "tool_call_id": tool_call_id,
-        "name": name,
-        "content": content,
-        "is_error": is_error,
+        "tool_call_id": message.tool_call_id,
+        "name": message.name,
+        "content": message.content,
+        "is_error": message.is_error,
     }
+
+
+def messages_to_dicts(
+    messages: tuple[AgentMessage, ...] | list[AgentMessage],
+) -> list[dict[str, Any]]:
+    """批量转换消息，供调试日志和摘要提示词使用。"""
+    return [message_to_dict(message) for message in messages]
