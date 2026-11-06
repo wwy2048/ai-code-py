@@ -6,10 +6,14 @@ from math import ceil
 from time import perf_counter
 from typing import Any
 
+from app.generation.adapters.conversation_store import (
+    ConversationStore,
+    MessageKind,
+    project_model_messages,
+)
+from app.generation.domain.messages import AgentMessage, UserMessage, messages_to_dicts
+from app.generation.ports.model import ContextSummarizer, ModelCallStatus, SummaryResult
 from app.models import ChatHistory
-from app.runtime.conversation import ConversationStore, MessageKind, project_model_messages
-from app.runtime.messages import AgentMessage, UserMessage, messages_to_dicts
-from app.runtime.model import ContextSummarizer, ModelCallStatus, SummaryResult
 
 logger = logging.getLogger(__name__)
 

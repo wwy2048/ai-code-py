@@ -1,8 +1,8 @@
 from typing import Protocol
 
-from app.runtime.messages import AssistantMessage, ToolCall
-from app.runtime.model import ModelCallStatus
-from app.runtime.tools import ToolExecutionResult
+from app.generation.domain.messages import AssistantMessage, ToolCall
+from app.generation.ports.model import ModelCallStatus
+from app.generation.ports.tools import ToolExecutionResult
 
 
 class TurnJournal(Protocol):
@@ -13,6 +13,8 @@ class TurnJournal(Protocol):
     async def append_assistant(
         self, message: AssistantMessage, *, batch_id: str | None
     ) -> None: ...
+
+    async def append_assistant_placeholder(self, *, batch_id: str) -> None: ...
 
     async def append_tool_call(self, call: ToolCall, *, batch_id: str) -> None: ...
 
@@ -47,6 +49,9 @@ class NullTurnJournal:
         return None
 
     async def append_assistant(self, message: AssistantMessage, *, batch_id: str | None) -> None:
+        return None
+
+    async def append_assistant_placeholder(self, *, batch_id: str) -> None:
         return None
 
     async def append_tool_call(self, call: ToolCall, *, batch_id: str) -> None:

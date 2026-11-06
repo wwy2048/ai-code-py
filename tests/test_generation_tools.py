@@ -2,9 +2,9 @@ from pathlib import Path
 
 import pytest
 
-from app.runtime.model import ToolCall
-from app.runtime.tools import ToolExtension, ToolRegistry
-from app.runtime.workspace import Workspace
+from app.generation.adapters.model import ToolCall
+from app.generation.adapters.tools import ToolExtension, ToolRegistry
+from app.generation.adapters.workspace import Workspace
 
 
 def test_workspace_file_tools_write_read_edit_and_glob(tmp_path: Path) -> None:

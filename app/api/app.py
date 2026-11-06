@@ -12,8 +12,15 @@ from app.deployment import AppDeployer
 from app.deps import AdminUser, CurrentUser, DbSession
 from app.download import WorkspaceArchiveError, build_workspace_zip
 from app.errors import BusinessError
+from app.generation.adapters.memory import MemoryStore
+from app.generation.domain.commands import (
+    ControlCommand,
+    InterruptTurnCommand,
+    RedirectTurnCommand,
+    StartTurnCommand,
+    SteerTurnCommand,
+)
 from app.response import success
-from app.runtime.memory import MemoryStore
 from app.schemas import (
     AppAdminUpdateRequest,
     AppCreateRequest,
@@ -21,6 +28,7 @@ from app.schemas import (
     AppQueryRequest,
     AppUpdateRequest,
     DeleteRequest,
+    GenerationControlRequest,
     GenerationRequest,
 )
 from app.services.apps import (
@@ -246,13 +254,15 @@ async def generate_code(
     last_event_id: str | None = Header(default=None, alias="Last-Event-ID"),
 ) -> StreamingResponse:
     app = await require_owned_app(session, payload.app_id, current_user.id)
-    manager = request.app.state.generation_manager
-    job = await manager.start_turn(
-        app_id=app.id,
-        user_id=current_user.id,
-        code_gen_type=app.code_gen_type or "html",
-        message=payload.message,
-        request_id=payload.request_id,
+    runtime = request.app.state.generation_runtime
+    job = await runtime.start_turn(
+        StartTurnCommand(
+            app_id=app.id,
+            user_id=current_user.id,
+            code_gen_type=app.code_gen_type or "html",
+            message=payload.message,
+            turn_id=payload.request_id,
+        )
     )
     try:
         cursor = int(last_event_id) if last_event_id else None
@@ -260,8 +270,8 @@ async def generate_code(
         cursor = None
 
     async def stream_events() -> AsyncIterator[str]:
-        async for event in manager.stream(job, cursor):
-            yield manager.encode_sse(event)
+        async for event in runtime.stream(job, cursor):
+            yield runtime.encode_sse(event)
 
     return StreamingResponse(
         stream_events(),
@@ -271,3 +281,46 @@ async def generate_code(
             "X-Accel-Buffering": "no",
         },
     )
+
+
+@router.post("/chat/turn/control")
+async def control_generation(
+    payload: GenerationControlRequest,
+    request: Request,
+    session: DbSession,
+    current_user: CurrentUser,
+) -> dict:
+    app = await require_owned_app(session, payload.app_id, current_user.id)
+    runtime = request.app.state.generation_runtime
+    app_id = app.id
+    user_id = current_user.id
+    code_gen_type = app.code_gen_type or "html"
+    command: ControlCommand
+    if payload.action == "steer":
+        command = SteerTurnCommand(
+            app_id=app_id,
+            user_id=user_id,
+            code_gen_type=code_gen_type,
+            turn_id=payload.turn_id,
+            command_id=payload.command_id,
+            text=payload.message or "",
+        )
+    elif payload.action == "redirect":
+        command = RedirectTurnCommand(
+            app_id=app_id,
+            user_id=user_id,
+            code_gen_type=code_gen_type,
+            turn_id=payload.turn_id,
+            command_id=payload.command_id,
+            text=payload.message or "",
+        )
+    else:
+        command = InterruptTurnCommand(
+            app_id=app_id,
+            user_id=user_id,
+            code_gen_type=code_gen_type,
+            turn_id=payload.turn_id,
+            command_id=payload.command_id,
+        )
+    ack = await runtime.control(command)
+    return success(ack.as_dict())

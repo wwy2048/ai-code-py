@@ -1,73 +1,34 @@
-from collections.abc import Awaitable, Callable
-from dataclasses import dataclass, field
-from enum import StrEnum
-from typing import Any, Protocol, runtime_checkable
+from __future__ import annotations
 
-from app.runtime.messages import AgentMessage, ToolCall, ToolResultMessage, UserMessage
+from app.generation.domain.messages import ToolCall, ToolResultMessage, UserMessage
+from app.generation.ports.model import (
+    AgentModel,
+    ContextSummarizer,
+    ModelCallError,
+    ModelCallStatus,
+    ModelReply,
+    ModelRequest,
+    SummaryResult,
+    TextEmitter,
+)
 
-TextEmitter = Callable[[str], Awaitable[None]]
-
-
-@dataclass(frozen=True)
-class ModelRequest:
-    """provider-neutral 的一次模型调用请求。"""
-
-    messages: tuple[AgentMessage, ...]
-    tools: tuple[dict[str, Any], ...] = ()
-    model_name: str = ""
-
-
-@dataclass(frozen=True)
-class ModelReply:
-    text: str = ""
-    tool_calls: list[ToolCall] = field(default_factory=list)
-    input_tokens: int = 0
-    output_tokens: int = 0
-    model_name: str = ""
-    retry_count: int = 0
-    stop_reason: str | None = None
-
-
-@dataclass(frozen=True)
-class SummaryResult:
-    text: str
-    model_name: str
-    input_tokens: int = 0
-    output_tokens: int = 0
-    retry_count: int = 0
-
-
-class ModelCallStatus(StrEnum):
-    SUCCESS = "success"
-    ERROR = "error"
-
-
-class ModelCallError(RuntimeError):
-    def __init__(self, summary: str, retry_count: int) -> None:
-        super().__init__(summary)
-        self.summary = summary
-        self.retry_count = retry_count
-
-
-class AgentModel(Protocol):
-    async def next_turn(
-        self,
-        request: ModelRequest,
-        on_text: TextEmitter,
-    ) -> ModelReply: ...
-
-
-@runtime_checkable
-class ContextSummarizer(Protocol):
-    @property
-    def model_name(self) -> str: ...
-
-    async def summarize(
-        self,
-        *,
-        previous_summary: str | None,
-        transcript: str,
-    ) -> SummaryResult: ...
+__all__ = [
+    "AgentModel",
+    "ContextSummarizer",
+    "ModelCallError",
+    "ModelCallStatus",
+    "ModelReply",
+    "ModelRequest",
+    "ScriptedHtmlModel",
+    "ScriptedMultiFileModel",
+    "ScriptedVueModel",
+    "SummaryResult",
+    "TextEmitter",
+    "ToolCall",
+    "ToolResultMessage",
+    "UnavailableAgentModel",
+    "UserMessage",
+]
 
 
 class ScriptedHtmlModel:

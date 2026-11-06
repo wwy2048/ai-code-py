@@ -5,17 +5,17 @@ from typing import Any, cast
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import ChatHistory, ModelCallLog
-from app.redaction import sanitize_sensitive_text
-from app.runtime.messages import (
+from app.generation.domain.messages import (
     AgentMessage,
     AssistantMessage,
     ToolCall,
     ToolResultMessage,
     UserMessage,
 )
-from app.runtime.model import ModelCallStatus
-from app.runtime.tools import ToolExecutionResult
+from app.generation.ports.model import ModelCallStatus
+from app.generation.ports.tools import ToolExecutionResult
+from app.models import ChatHistory, ModelCallLog
+from app.redaction import sanitize_sensitive_text
 
 
 class MessageType(StrEnum):
@@ -30,6 +30,7 @@ class MessageKind(StrEnum):
     TOOL_CALL = "tool_call"
     TOOL_RESULT = "tool_result"
     COMPACTION = "compaction"
+    TURN_LIFECYCLE = "turn_lifecycle"
 
 
 class ConversationStore:
@@ -153,6 +154,34 @@ class ConversationStore:
             payload={"batchId": batch_id, "phase": "assistant_text"} if batch_id else None,
         )
 
+    async def append_assistant_placeholder(self, *, batch_id: str) -> None:
+        """写入隐藏的中断占位，保证后续模型消息配对完整。"""
+        await self._append(
+            message="[本轮已被用户中断，不再基于不完整的内容作答]",
+            message_type=MessageType.AI,
+            message_kind=MessageKind.ASSISTANT,
+            visible=False,
+            payload={"batchId": batch_id, "phase": "interrupted"},
+        )
+
+    async def append_turn_lifecycle(
+        self,
+        phase: str,
+        *,
+        outcome: str | None = None,
+        payload: dict[str, Any] | None = None,
+    ) -> ChatHistory:
+        """追加隐藏的 Turn 生命周期事实，不进入模型上下文。"""
+        data = {"phase": phase, **({"outcome": outcome} if outcome else {}), **(payload or {})}
+        return await self._append(
+            message=phase,
+            message_type=MessageType.AI,
+            message_kind=MessageKind.TURN_LIFECYCLE,
+            visible=False,
+            active=False,
+            payload=data,
+        )
+
     async def append_tool_call(
         self,
         call: ToolCall,
@@ -239,6 +268,7 @@ class ConversationStore:
         tool_name: str | None = None,
         payload: dict[str, Any] | None = None,
         is_error: bool = False,
+        active: bool = True,
     ) -> ChatHistory:
         record = ChatHistory(
             message=message,
@@ -250,7 +280,7 @@ class ConversationStore:
             message_kind=message_kind.value,
             payload=payload,
             visible=visible,
-            active=True,
+            active=active,
             tool_call_id=tool_call_id,
             tool_name=tool_name,
             is_error=is_error,
@@ -279,6 +309,8 @@ def project_model_messages(records: list[ChatHistory]) -> list[AgentMessage]:
     assistant_text_by_batch: dict[tuple[str | None, str], str] = {}
 
     for record in records:
+        if record.message_kind == MessageKind.TURN_LIFECYCLE:
+            continue
         if record.message_kind == MessageKind.TOOL_RESULT and record.tool_call_id:
             result_by_call[(record.turn_id, record.tool_call_id)] = record
         elif record.message_kind == MessageKind.TOOL_CALL and record.tool_call_id:
@@ -297,19 +329,18 @@ def project_model_messages(records: list[ChatHistory]) -> list[AgentMessage]:
         return [
             call
             for call in calls
-            if call.tool_call_id
-            and (call.turn_id, call.tool_call_id) in result_by_call
+            if call.tool_call_id and (call.turn_id, call.tool_call_id) in result_by_call
         ]
 
     projectable_batches = {
-        batch_key
-        for batch_key, calls in calls_by_batch.items()
-        if completed_calls(calls)
+        batch_key for batch_key, calls in calls_by_batch.items() if completed_calls(calls)
     }
 
     projected: list[AgentMessage] = []
     emitted_batches: set[tuple[str | None, str]] = set()
     for record in records:
+        if record.message_kind == MessageKind.TURN_LIFECYCLE:
+            continue
         if record.message_kind == MessageKind.TOOL_CALL:
             batch_key = _record_batch_key(record)
             if batch_key is not None:
@@ -344,9 +375,7 @@ def project_model_messages(records: list[ChatHistory]) -> list[AgentMessage]:
                         )
                     )
                 continue
-            legacy_result = result_by_call.get(
-                (record.turn_id, record.tool_call_id or "")
-            )
+            legacy_result = result_by_call.get((record.turn_id, record.tool_call_id or ""))
             if legacy_result is None or not record.tool_call_id:
                 continue
             projected.append(

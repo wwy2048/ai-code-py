@@ -104,6 +104,37 @@
 
         <!-- 用户消息输入框 -->
         <div class="input-container">
+          <div v-if="isGenerating && isOwner" class="turn-control-bar">
+            <a-textarea
+              v-model:value="controlInput"
+              class="turn-control-input"
+              placeholder="运行中插话或输入转向要求"
+              :rows="2"
+              :maxlength="1000"
+              :disabled="controlSending"
+              @keydown.enter.exact.prevent="submitTurnControl('steer')"
+            />
+            <div class="turn-control-actions">
+              <a-button
+                size="small"
+                :loading="controlSending"
+                :disabled="!controlInput.trim()"
+                @click="submitTurnControl('steer')"
+              >插话</a-button>
+              <a-button
+                size="small"
+                :loading="controlSending"
+                :disabled="!controlInput.trim()"
+                @click="submitTurnControl('redirect')"
+              >转向</a-button>
+              <a-button
+                size="small"
+                danger
+                :loading="controlSending"
+                @click="submitTurnControl('interrupt')"
+              >停止</a-button>
+            </div>
+          </div>
           <div class="input-wrapper">
             <a-tooltip v-if="!isOwner" title="无法在别人的作品下对话哦~" placement="top">
               <a-textarea
@@ -202,7 +233,13 @@ import {
   deleteApp as deleteAppApi,
 } from '@/api/appController'
 import { listAppChatHistory } from '@/api/chatHistoryController'
-import { createRequestId, streamGeneration, type StreamEvent } from '@/api/generationStream'
+import {
+  createRequestId,
+  sendTurnControl,
+  streamGeneration,
+  type StreamEvent,
+  type TurnControlAction,
+} from '@/api/generationStream'
 import { CodeGenTypeEnum, formatCodeGenType } from '@/utils/codeGenTypes'
 import request from '@/request'
 
@@ -258,6 +295,8 @@ interface Message {
 
 const messages = ref<Message[]>([])
 const userInput = ref('')
+const controlInput = ref('')
+const controlSending = ref(false)
 const isGenerating = ref(false)
 const activeTurnId = ref<string>()
 const messagesContainer = ref<HTMLElement>()
@@ -540,10 +579,14 @@ const sendMessage = async () => {
 // 生成代码 - SSE 协议由 API 客户端处理
 let activeAbortController: AbortController | null = null
 
-const generateCode = async (userMessage: string, aiMessageIndex: number) => {
+const generateCode = async (
+  userMessage: string,
+  aiMessageIndex: number,
+  existingRequestId?: string
+) => {
   const baseURL = request.defaults.baseURL || API_BASE_URL
   activeAbortController = new AbortController()
-  const requestId = createRequestId()
+  const requestId = existingRequestId || createRequestId()
   activeTurnId.value = requestId
   messages.value[aiMessageIndex].turnId = requestId
 
@@ -681,6 +724,23 @@ const generateCode = async (userMessage: string, aiMessageIndex: number) => {
       case 'subagent_failed':
         appendText('> 子代理执行失败，主流程将继续处理。', 'status:subagent')
         break
+      case 'steering_consumed':
+        appendControlNote(`> 已应用插话：${String(data.texts || '')}`)
+        break
+      case 'step_cancelled':
+        appendControlNote('> 当前模型步已取消，正在安全收口。')
+        break
+      case 'redirect_applied':
+        appendControlNote(`> 已转向：${String(data.texts || '')}`)
+        break
+      case 'turn_interrupted':
+        appendControlNote('> 本轮已中断。')
+        break
+      case 'stream_gap':
+        message.warning('事件流出现缺口，正在重新同步历史...')
+        setTimeout(() => window.location.reload(), 500)
+        break
+
       case 'turn_finished': {
         isGenerating.value = false
         activeTurnId.value = undefined
@@ -695,6 +755,8 @@ const generateCode = async (userMessage: string, aiMessageIndex: number) => {
         })
         if (data.status === 'completed') {
           setTimeout(() => updatePreview(), 500)
+        } else if (data.status === 'interrupted') {
+          message.warning('生成已中断')
         } else {
           message.error('生成失败，请重试')
         }
@@ -717,6 +779,70 @@ const generateCode = async (userMessage: string, aiMessageIndex: number) => {
     })
   } catch (error) {
     if (!activeAbortController.signal.aborted) handleError(error, aiMessageIndex)
+  }
+}
+
+const appendControlNote = (content: string) => {
+  const turnId = activeTurnId.value
+  if (!turnId) return
+  const messageItem = messages.value.find(item => item.type === 'ai' && item.turnId === turnId)
+  if (!messageItem) return
+  if (!messageItem.blocks) messageItem.blocks = []
+  messageItem.blocks.push({
+    type: 'text',
+    batchId: `status:control:${Date.now()}`,
+    content,
+  })
+  messageItem.loading = false
+  scrollToBottom()
+}
+
+const submitTurnControl = async (action: TurnControlAction) => {
+  const turnId = activeTurnId.value
+  if (!turnId || !appId.value || controlSending.value) return
+  const text = controlInput.value.trim()
+  if (action !== 'interrupt' && !text) {
+    message.warning('请先输入插话或转向内容')
+    return
+  }
+
+  controlSending.value = true
+  try {
+    const baseURL = request.defaults.baseURL || API_BASE_URL
+    const ack = await sendTurnControl({
+      baseURL,
+      appId: Number(appId.value),
+      turnId,
+      action,
+      message: action === 'interrupt' ? undefined : text,
+      commandId: createRequestId(),
+    })
+
+    if (ack.status === 'degraded_to_followup' && text) {
+      messages.value.push({ type: 'user', content: text })
+      const aiMessageIndex = messages.value.length
+      messages.value.push({ type: 'ai', content: '', blocks: [], loading: true })
+      isGenerating.value = true
+      controlInput.value = ''
+      void generateCode(text, aiMessageIndex, ack.turnId)
+      return
+    }
+
+    if (ack.status === 'accepted' || ack.status === 'duplicate') {
+      if (action === 'steer') appendControlNote(`> 已发送插话：${text}`)
+      if (action === 'redirect') appendControlNote(`> 已发送转向：${text}`)
+      if (action === 'interrupt') appendControlNote('> 已请求停止当前生成。')
+      controlInput.value = ''
+    } else if (ack.status === 'not_active') {
+      message.warning('当前回合已结束，控制命令未生效')
+    } else if (ack.status === 'stale') {
+      message.warning('目标回合已过期，控制命令未生效')
+    }
+  } catch (error) {
+    console.error('发送控制命令失败：', error)
+    message.error(error instanceof Error ? error.message : '控制命令发送失败')
+  } finally {
+    controlSending.value = false
   }
 }
 
@@ -999,6 +1125,29 @@ onUnmounted(() => {
   gap: 8px;
   color: #666;
 }
+
+.turn-control-bar {
+  display: flex;
+  gap: 10px;
+  align-items: flex-end;
+  padding: 10px;
+  margin-bottom: 10px;
+  border: 1px solid #d6e4ff;
+  border-radius: 8px;
+  background: #f5f9ff;
+}
+
+.turn-control-input {
+  flex: 1;
+  resize: none;
+}
+
+.turn-control-actions {
+  display: flex;
+  gap: 6px;
+  padding-bottom: 2px;
+}
+
 
 /* 输入区域 */
 .input-container {

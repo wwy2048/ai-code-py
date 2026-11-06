@@ -4,10 +4,10 @@ from typing import Any
 
 import pytest
 
-from app.runtime.messages import ToolResultMessage
-from app.runtime.model import ModelReply, ModelRequest, TextEmitter, ToolCall
-from app.runtime.subagent import SubagentRunner
-from app.runtime.workspace import Workspace
+from app.generation.adapters.model import ModelReply, ModelRequest, TextEmitter, ToolCall
+from app.generation.adapters.subagent import SubagentRunner
+from app.generation.adapters.workspace import Workspace
+from app.generation.domain.messages import ToolResultMessage
 
 
 class WritingSubagentModel:
@@ -47,9 +47,7 @@ class NestedSubagentModel:
                 ]
             )
         result = next(
-            message
-            for message in request.messages
-            if isinstance(message, ToolResultMessage)
+            message for message in request.messages if isinstance(message, ToolResultMessage)
         )
         assert "未知工具: delegate_subagent" in result.content
         return ModelReply(text="未创建下一级子代理")

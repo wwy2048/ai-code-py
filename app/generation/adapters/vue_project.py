@@ -4,7 +4,7 @@ import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
-_TEMPLATE = Path(__file__).parent.parent / "templates" / "vue_project"
+_TEMPLATE = Path(__file__).resolve().parents[2] / "templates" / "vue_project"
 _FIXED = ("package.json", "vite.config.js", "index.html", "src/main.js")
 _GENERATED = ("src/App.vue", "src/style.css")
 

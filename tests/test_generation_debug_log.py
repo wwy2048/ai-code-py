@@ -1,8 +1,8 @@
 import logging
 
-from app.runtime.debug_log import AgentDebugLogger
-from app.runtime.debug_log import logger as debug_logger
-from app.runtime.model import ModelReply, ToolCall
+from app.generation.adapters.debug_log import AgentDebugLogger
+from app.generation.adapters.debug_log import logger as debug_logger
+from app.generation.adapters.model import ModelReply, ToolCall
 
 
 class RecordingHandler(logging.Handler):

@@ -4,7 +4,7 @@ from collections.abc import Sequence
 from dataclasses import asdict
 from typing import Any
 
-from app.runtime.hooks import (
+from app.generation.application.hooks import (
     AfterModelContext,
     AfterToolContext,
     BeforeModelContext,
@@ -12,10 +12,10 @@ from app.runtime.hooks import (
     HookSet,
     ModelFailedContext,
 )
-from app.runtime.messages import AgentMessage, ToolCall, message_to_dict
-from app.runtime.model import ModelReply
+from app.generation.domain.messages import AgentMessage, ToolCall, message_to_dict
+from app.generation.ports.model import ModelReply
 
-logger = logging.getLogger("app.runtime.agent_debug")
+logger = logging.getLogger("app.generation.agent_debug")
 logger.setLevel(logging.INFO)
 logger.propagate = False
 if not logger.handlers:

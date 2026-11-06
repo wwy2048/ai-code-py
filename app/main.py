@@ -27,11 +27,11 @@ from app.errors import (
     handle_unexpected_error,
     handle_validation_error,
 )
-from app.runtime.agent import AgentTurnExecutor
-from app.runtime.compaction import ContextCompactor
-from app.runtime.factory import create_agent_model_factory
-from app.runtime.manager import GenerationManager
-from app.runtime.model import AgentModel
+from app.generation.adapters.compaction import ContextCompactor
+from app.generation.adapters.executor import AgentTurnExecutor
+from app.generation.adapters.factory import create_agent_model_factory
+from app.generation.application.runtime import GenerationRuntime
+from app.generation.ports.model import AgentModel
 from app.services.deployments import generate_deploy_key
 
 
@@ -51,6 +51,7 @@ def create_app(
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         yield
+        await app.state.generation_runtime.shutdown()
         await app.state.cover_generator.shutdown()
         await app.state.code_gen_type_router.aclose()
         await app.state.redis.aclose()
@@ -95,7 +96,10 @@ def create_app(
         max_rounds_per_phase=app_settings.agent_max_rounds_per_phase,
         max_validation_repairs=app_settings.agent_max_validation_repairs,
     )
-    app.state.generation_manager = GenerationManager(turn_executor)
+    app.state.generation_runtime = GenerationRuntime(
+        turn_executor,
+        event_buffer_limit=app_settings.generation_event_buffer_limit,
+    )
 
     app.add_exception_handler(BusinessError, handle_business_error)
     app.add_exception_handler(StarletteHTTPException, handle_http_error)

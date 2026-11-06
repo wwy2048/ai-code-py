@@ -2,12 +2,13 @@ from collections.abc import Callable
 
 from app.codegen_router import CodeGenType
 from app.config import Settings
-from app.runtime.anthropic_model import (
+from app.generation.adapters.anthropic_model import (
     AnthropicHtmlModel,
     AnthropicMultiFileModel,
     AnthropicVueModel,
 )
-from app.runtime.model import AgentModel, UnavailableAgentModel
+from app.generation.adapters.model import UnavailableAgentModel
+from app.generation.ports.model import AgentModel
 
 
 def create_agent_model_factory(settings: Settings) -> Callable[[str], AgentModel]:

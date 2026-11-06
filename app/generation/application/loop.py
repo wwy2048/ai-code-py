@@ -1,9 +1,11 @@
-from collections.abc import Awaitable, Callable
+from __future__ import annotations
+
+import asyncio
 from dataclasses import dataclass, field
 from time import perf_counter
-from typing import Any
 
-from app.runtime.hooks import (
+from app.generation.application.control import TurnControl
+from app.generation.application.hooks import (
     AfterModelContext,
     AfterToolContext,
     BeforeModelContext,
@@ -11,12 +13,20 @@ from app.runtime.hooks import (
     HookBus,
     ModelFailedContext,
 )
-from app.runtime.journal import TurnJournal
-from app.runtime.messages import AgentMessage, AssistantMessage, ToolCall, ToolResultMessage
-from app.runtime.model import AgentModel, ModelCallStatus, ModelRequest
-from app.runtime.tools import ToolExecutionResult, ToolRegistry
+from app.generation.domain.messages import (
+    AgentMessage,
+    AssistantMessage,
+    ToolCall,
+    ToolResultMessage,
+    UserMessage,
+)
+from app.generation.ports.journal import TurnJournal
+from app.generation.ports.model import AgentModel, ModelCallStatus, ModelRequest
+from app.generation.ports.tools import ToolExecutionResult, ToolExecutor
+from app.generation.ports.turn import EventEmitter
 
-EventEmitter = Callable[[str, dict[str, Any]], Awaitable[None]]
+INTERRUPTION_PLACEHOLDER = "[本轮已被用户中断，不再基于不完整的内容作答]"
+SKIPPED_TOOL_OUTPUT = "工具调用因用户中断而未执行。"
 
 
 @dataclass
@@ -35,6 +45,7 @@ class TurnState:
 class PhaseResult:
     exhausted: bool
     final_text: str = ""
+    interrupted: bool = False
 
 
 class AgentLoop:
@@ -44,10 +55,11 @@ class AgentLoop:
         self,
         *,
         model: AgentModel,
-        tools: ToolRegistry,
+        tools: ToolExecutor,
         journal: TurnJournal,
         emit: EventEmitter,
         hooks: HookBus | None = None,
+        control: TurnControl | None = None,
         max_rounds: int = 12,
         fallback_text: str = "页面已生成。",
     ) -> None:
@@ -58,15 +70,21 @@ class AgentLoop:
         self._journal = journal
         self._emit = emit
         self._hooks = hooks or HookBus()
+        self._control = control or TurnControl()
         self._max_rounds = max_rounds
         self._fallback_text = fallback_text
 
     async def run_phase(self, state: TurnState) -> PhaseResult:
-        """执行一段模型循环，直到模型不再调用工具或耗尽本段预算。"""
-        for _ in range(self._max_rounds):
+        """执行一段模型循环，直到模型不再调用工具、耗尽预算或被中断。"""
+        for round_offset in range(self._max_rounds):
             state.model_round += 1
             round_index = state.model_round
             batch_id = f"{state.turn_id}:{round_index}"
+
+            if await self._apply_pending_control(state, batch_id=batch_id, round_index=round_index):
+                return PhaseResult(exhausted=False, interrupted=True)
+            await self._drain_steering(state, batch_id=batch_id, round_index=round_index)
+
             streamed_parts: list[str] = []
 
             async def on_text(
@@ -75,10 +93,7 @@ class AgentLoop:
                 current_batch_id: str = batch_id,
             ) -> None:
                 parts.append(delta)
-                await self._emit(
-                    "text_delta",
-                    {"text": delta, "batchId": current_batch_id},
-                )
+                await self._emit("text_delta", {"text": delta, "batchId": current_batch_id})
 
             request = ModelRequest(
                 messages=tuple(state.messages),
@@ -93,8 +108,29 @@ class AgentLoop:
                 )
             )
             started = perf_counter()
+            task = asyncio.create_task(self._model.next_turn(request, on_text))
+            self._control.bind_step(task, step_id=f"{state.turn_id}:{round_index}")
             try:
-                reply = await self._model.next_turn(request, on_text)
+                reply = await task
+            except asyncio.CancelledError:
+                duration_ms = int((perf_counter() - started) * 1000)
+                if not self._control.has_interrupt():
+                    if not task.done():
+                        task.cancel()
+                    raise
+                await self._journal.append_model_call(
+                    status=ModelCallStatus.CANCELLED,
+                    model_name=self._model_name,
+                    duration_ms=duration_ms,
+                    error_type="Interrupted",
+                    error_summary="用户中断当前模型步",
+                )
+                await self._journal.commit()
+                if await self._apply_pending_control(
+                    state, batch_id=batch_id, round_index=round_index
+                ):
+                    return PhaseResult(exhausted=False, interrupted=True)
+                continue
             except Exception as exc:
                 duration_ms = int((perf_counter() - started) * 1000)
                 await self._hooks.model_failed(
@@ -116,8 +152,28 @@ class AgentLoop:
                 )
                 await self._journal.commit()
                 raise
+            finally:
+                self._control.clear_step(task)
 
             duration_ms = int((perf_counter() - started) * 1000)
+            if self._control.has_interrupt():
+                # 模型刚好返回但用户已抢先中断：该回复不进入轨迹。
+                await self._journal.append_model_call(
+                    status=ModelCallStatus.CANCELLED,
+                    model_name=reply.model_name or self._model_name,
+                    duration_ms=duration_ms,
+                    input_tokens=reply.input_tokens,
+                    output_tokens=reply.output_tokens,
+                    error_type="Interrupted",
+                    error_summary="用户中断当前模型步",
+                )
+                await self._journal.commit()
+                if await self._apply_pending_control(
+                    state, batch_id=batch_id, round_index=round_index
+                ):
+                    return PhaseResult(exhausted=False, interrupted=True)
+                continue
+
             await self._hooks.after_model(
                 AfterModelContext(
                     turn_id=state.turn_id,
@@ -151,9 +207,7 @@ class AgentLoop:
 
             if reply.stop_reason == "max_tokens":
                 if not reply.tool_calls:
-                    raise RuntimeError(
-                        "模型输出达到 token 上限，请缩短需求或拆分为多个回合"
-                    )
+                    raise RuntimeError("模型输出达到 token 上限，请缩短需求或拆分为多个回合")
                 await self._reject_truncated_tools(
                     state,
                     reply.tool_calls,
@@ -164,6 +218,10 @@ class AgentLoop:
                 continue
 
             if not reply.tool_calls:
+                if self._control.has_steering() and round_offset < self._max_rounds - 1:
+                    await self._drain_steering(state, batch_id=batch_id, round_index=round_index)
+                    continue
+                self._control.close()
                 if state.last_round_text:
                     state.final_assistant_text = round_text
                 else:
@@ -180,7 +238,7 @@ class AgentLoop:
                     )
                 return PhaseResult(exhausted=False, final_text=state.final_assistant_text)
 
-            effective_calls, results = await self._execute_tools(
+            effective_calls, results, interrupted = await self._execute_tools(
                 state,
                 reply.tool_calls,
                 batch_id=batch_id,
@@ -190,8 +248,68 @@ class AgentLoop:
                 AssistantMessage(content=reply.text, tool_calls=tuple(effective_calls))
             )
             state.messages.extend(results)
+            if interrupted:
+                if await self._apply_pending_control(
+                    state, batch_id=batch_id, round_index=round_index
+                ):
+                    return PhaseResult(exhausted=False, interrupted=True)
+                continue
 
+        self._control.close()
         return PhaseResult(exhausted=True, final_text=state.final_assistant_text)
+
+    async def _drain_steering(
+        self,
+        state: TurnState,
+        *,
+        batch_id: str,
+        round_index: int,
+    ) -> None:
+        items = self._control.drain_steering()
+        if not items:
+            return
+        texts: list[str] = []
+        for text, _command_id in items:
+            texts.append(text)
+            state.messages.append(UserMessage(content=text))
+            await self._journal.append_user(text)
+        await self._journal.commit()
+        await self._emit(
+            "steering_consumed",
+            {"texts": texts, "batchId": batch_id, "roundIndex": round_index},
+        )
+
+    async def _apply_pending_control(
+        self,
+        state: TurnState,
+        *,
+        batch_id: str,
+        round_index: int,
+    ) -> bool:
+        request = self._control.consume_interrupt()
+        if request is None:
+            return False
+        reason = "stop" if request.stop else "redirect"
+        await self._emit(
+            "step_cancelled",
+            {"reason": reason, "batchId": batch_id, "roundIndex": round_index},
+        )
+        state.messages.append(AssistantMessage(content=INTERRUPTION_PLACEHOLDER))
+        await self._journal.append_assistant_placeholder(batch_id=batch_id)
+        await self._journal.commit()
+        if request.stop:
+            self._control.close()
+            await self._emit("turn_interrupted", {"reason": "user_stop"})
+            return True
+        for text in request.redirect_texts:
+            state.messages.append(UserMessage(content=text))
+            await self._journal.append_user(text)
+        await self._journal.commit()
+        await self._emit(
+            "redirect_applied",
+            {"texts": list(request.redirect_texts), "batchId": batch_id},
+        )
+        return False
 
     @property
     def _model_name(self) -> str:
@@ -204,10 +322,23 @@ class AgentLoop:
         *,
         batch_id: str,
         round_index: int,
-    ) -> tuple[list[ToolCall], list[ToolResultMessage]]:
+    ) -> tuple[list[ToolCall], list[ToolResultMessage], bool]:
         effective_calls: list[ToolCall] = []
         results: list[ToolResultMessage] = []
-        for original_call in calls:
+        interrupted = False
+
+        for index, original_call in enumerate(calls):
+            if self._control.has_interrupt():
+                await self._skip_remaining_tools(
+                    state,
+                    calls[index:],
+                    effective_calls=effective_calls,
+                    results=results,
+                    batch_id=batch_id,
+                )
+                interrupted = True
+                break
+
             outcome = await self._hooks.before_tool(
                 BeforeToolContext(
                     turn_id=state.turn_id,
@@ -270,7 +401,69 @@ class AgentLoop:
                     **result.public_input,
                 },
             )
-        return effective_calls, results
+            if self._control.has_interrupt():
+                await self._skip_remaining_tools(
+                    state,
+                    calls[index + 1 :],
+                    effective_calls=effective_calls,
+                    results=results,
+                    batch_id=batch_id,
+                )
+                interrupted = True
+                break
+        return effective_calls, results, interrupted
+
+    async def _skip_remaining_tools(
+        self,
+        state: TurnState,
+        calls: list[ToolCall],
+        *,
+        effective_calls: list[ToolCall],
+        results: list[ToolResultMessage],
+        batch_id: str,
+    ) -> None:
+        for call in calls:
+            public_input = self._tools.public_input(call)
+            await self._emit(
+                "tool_started",
+                {
+                    "toolCallId": call.id,
+                    "name": call.name,
+                    "batchId": batch_id,
+                    **public_input,
+                },
+            )
+            result = ToolExecutionResult(
+                ok=False,
+                output=SKIPPED_TOOL_OUTPUT,
+                public_input=public_input,
+                duration_ms=0,
+            )
+            effective_calls.append(call)
+            await self._journal.append_tool_call(call, batch_id=batch_id)
+            await self._journal.append_tool_result(call, result, batch_id=batch_id)
+            await self._journal.commit()
+            results.append(
+                ToolResultMessage(
+                    tool_call_id=call.id,
+                    name=call.name,
+                    content=result.output,
+                    is_error=True,
+                )
+            )
+            await self._emit(
+                "tool_finished",
+                {
+                    "toolCallId": call.id,
+                    "name": call.name,
+                    "batchId": batch_id,
+                    "status": "failed",
+                    "durationMs": 0,
+                    "sizeBytes": None,
+                    "preview": result.output,
+                    **public_input,
+                },
+            )
 
     async def _reject_truncated_tools(
         self,
@@ -335,7 +528,5 @@ class AgentLoop:
                     **result.public_input,
                 },
             )
-        state.messages.append(
-            AssistantMessage(content=assistant_text, tool_calls=tuple(calls))
-        )
+        state.messages.append(AssistantMessage(content=assistant_text, tool_calls=tuple(calls)))
         state.messages.extend(results)

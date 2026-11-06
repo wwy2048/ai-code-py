@@ -1,32 +1,17 @@
 import inspect
-from collections.abc import Awaitable, Callable, Mapping, Sequence
-from dataclasses import dataclass, field
+from collections.abc import Mapping, Sequence
 from time import perf_counter
 from typing import Any
 
-from app.runtime.messages import ToolCall
-from app.runtime.tool_definitions import TOOL_DEFINITIONS
-from app.runtime.workspace import Workspace
-
-ToolHandlerResult = tuple[str, int | None]
-ToolHandler = Callable[[dict[str, Any]], ToolHandlerResult | Awaitable[ToolHandlerResult]]
-
-
-@dataclass(frozen=True)
-class ToolExecutionResult:
-    ok: bool
-    output: str
-    public_input: dict[str, Any]
-    duration_ms: int
-    size_bytes: int | None = None
-
-
-@dataclass(frozen=True)
-class ToolExtension:
-    """代码生成配置追加的工具 schema 与 handler 映射。"""
-
-    definitions: tuple[dict[str, Any], ...] = ()
-    handlers: Mapping[str, ToolHandler] = field(default_factory=dict)
+from app.generation.adapters.tool_definitions import TOOL_DEFINITIONS
+from app.generation.adapters.workspace import Workspace
+from app.generation.domain.messages import ToolCall
+from app.generation.ports.tools import (
+    ToolExecutionResult,
+    ToolExtension,
+    ToolHandler,
+    ToolHandlerResult,
+)
 
 
 class ToolRegistry:
@@ -92,9 +77,7 @@ class ToolRegistry:
 
     def public_input(self, call: ToolCall) -> dict[str, Any]:
         return {
-            key: call.arguments[key]
-            for key in self._public_input_keys
-            if key in call.arguments
+            key: call.arguments[key] for key in self._public_input_keys if key in call.arguments
         }
 
     async def execute(self, call: ToolCall) -> ToolExecutionResult:
@@ -112,9 +95,7 @@ class ToolRegistry:
             None,
         )
         required = (
-            definition.get("input_schema", {}).get("required", [])
-            if definition is not None
-            else []
+            definition.get("input_schema", {}).get("required", []) if definition is not None else []
         )
         missing = [key for key in required if key not in call.arguments]
         if missing:

@@ -6,11 +6,8 @@ from conftest import AppContext, StaticCodeGenTypeRouter
 from sqlalchemy import func, select
 
 from app.codegen_router import CodeGenType
-from app.models import ChatHistory, ModelCallLog
-from app.runtime.agent import AgentTurnExecutor
-from app.runtime.manager import GenerationManager
-from app.runtime.messages import ToolResultMessage, UserMessage
-from app.runtime.model import (
+from app.generation.adapters.executor import AgentTurnExecutor
+from app.generation.adapters.model import (
     ModelReply,
     ModelRequest,
     ScriptedMultiFileModel,
@@ -19,7 +16,11 @@ from app.runtime.model import (
     ToolCall,
     UnavailableAgentModel,
 )
-from app.runtime.vue_project import BuildResult, VueProjectBuilder
+from app.generation.adapters.vue_project import BuildResult, VueProjectBuilder
+from app.generation.application.runtime import GenerationRuntime
+from app.generation.domain.commands import StartTurnCommand
+from app.generation.domain.messages import ToolResultMessage, UserMessage
+from app.models import ChatHistory, ModelCallLog
 
 
 def _parse_sse(body: str) -> list[dict]:
@@ -223,13 +224,15 @@ async def test_generation_continues_without_an_active_subscriber(
     app_context: AppContext,
 ) -> None:
     user_id, app_id = await _register_login_and_create_app(app_context)
-    manager = app_context.app.state.generation_manager
+    manager = app_context.app.state.generation_runtime
     job = await manager.start_turn(
-        app_id=app_id,
-        user_id=user_id,
-        code_gen_type="html",
-        message="后台继续执行",
-        request_id="turn-without-subscriber",
+        StartTurnCommand(
+            app_id=app_id,
+            user_id=user_id,
+            code_gen_type="html",
+            message="后台继续执行",
+            turn_id="turn-without-subscriber",
+        )
     )
 
     async with asyncio.timeout(3):
@@ -270,7 +273,7 @@ async def test_path_escape_is_reported_as_failed_tool_without_writing(
         Path(app_context.app.state.settings.workspace_root),
         lambda _: model,
     )
-    app_context.app.state.generation_manager = GenerationManager(executor)
+    app_context.app.state.generation_runtime = GenerationRuntime(executor)
 
     response = await app_context.client.post(
         "/api/app/chat/gen/code",
@@ -286,9 +289,7 @@ async def test_path_escape_is_reported_as_failed_tool_without_writing(
     assert tool_finished["data"]["status"] == "failed"
     assert not (Path(app_context.app.state.settings.workspace_root).parent / "escape.html").exists()
     assert events[-1]["event"] == "turn_finished"
-    history = (
-        await app_context.client.get(f"/api/chatHistory/app/{app_id}")
-    ).json()["data"]
+    history = (await app_context.client.get(f"/api/chatHistory/app/{app_id}")).json()["data"]
     parts = history["partsByTurn"]["turn-path-escape"]
     assert [part["type"] for part in parts] == [
         "assistant_text",
@@ -315,7 +316,7 @@ async def test_model_failure_emits_error_then_failed_turn_without_leaking_detail
         Path(app_context.app.state.settings.workspace_root),
         lambda _: FailingModel(),
     )
-    app_context.app.state.generation_manager = GenerationManager(executor)
+    app_context.app.state.generation_runtime = GenerationRuntime(executor)
 
     response = await app_context.client.post(
         "/api/app/chat/gen/code",
@@ -478,7 +479,7 @@ async def test_one_turn_preserves_multiple_tool_batches_in_sequence(
     app_context: AppContext,
 ) -> None:
     _, app_id = await _register_login_and_create_app(app_context)
-    app_context.app.state.generation_manager = GenerationManager(
+    app_context.app.state.generation_runtime = GenerationRuntime(
         AgentTurnExecutor(
             app_context.session_factory,
             Path(app_context.app.state.settings.workspace_root),
@@ -496,16 +497,12 @@ async def test_one_turn_preserves_multiple_tool_batches_in_sequence(
     )
     events = _parse_sse(response.text)
     started_batches = [
-        event["data"]["batchId"]
-        for event in events
-        if event["event"] == "tool_started"
+        event["data"]["batchId"] for event in events if event["event"] == "tool_started"
     ]
     assert len(started_batches) == 2
     assert len(set(started_batches)) == 2
 
-    history_data = (
-        await app_context.client.get(f"/api/chatHistory/app/{app_id}")
-    ).json()["data"]
+    history_data = (await app_context.client.get(f"/api/chatHistory/app/{app_id}")).json()["data"]
     parts = history_data["partsByTurn"]["turn-two-batches"]
     assert [part["type"] for part in parts] == [
         "assistant_text",
@@ -526,9 +523,7 @@ async def test_one_turn_preserves_multiple_tool_batches_in_sequence(
     assert all(group["tools"][0]["status"] == "completed" for group in groups)
 
     visible_ai_messages = [
-        record["message"]
-        for record in history_data["records"]
-        if record["messageType"] == "ai"
+        record["message"] for record in history_data["records"] if record["messageType"] == "ai"
     ]
     assert visible_ai_messages == [
         "两次工具批次已按顺序完成。",
@@ -613,7 +608,7 @@ async def test_consecutive_tool_rounds_without_text_share_one_group(
     app_context: AppContext,
 ) -> None:
     _, app_id = await _register_login_and_create_app(app_context)
-    app_context.app.state.generation_manager = GenerationManager(
+    app_context.app.state.generation_runtime = GenerationRuntime(
         AgentTurnExecutor(
             app_context.session_factory,
             Path(app_context.app.state.settings.workspace_root),
@@ -629,9 +624,7 @@ async def test_consecutive_tool_rounds_without_text_share_one_group(
             "requestId": "turn-consecutive-tools",
         },
     )
-    history_data = (
-        await app_context.client.get(f"/api/chatHistory/app/{app_id}")
-    ).json()["data"]
+    history_data = (await app_context.client.get(f"/api/chatHistory/app/{app_id}")).json()["data"]
     parts = history_data["partsByTurn"]["turn-consecutive-tools"]
 
     assert [part["type"] for part in parts] == [
@@ -654,7 +647,7 @@ async def test_streamed_deltas_are_concatenated_in_persisted_assistant_message(
     app_context: AppContext,
 ) -> None:
     _, app_id = await _register_login_and_create_app(app_context)
-    app_context.app.state.generation_manager = GenerationManager(
+    app_context.app.state.generation_runtime = GenerationRuntime(
         AgentTurnExecutor(
             app_context.session_factory,
             Path(app_context.app.state.settings.workspace_root),
@@ -684,7 +677,7 @@ async def test_truncated_tool_call_is_fed_back_without_executing_partial_argumen
 ) -> None:
     user_id, app_id = await _register_login_and_create_app(app_context)
     model = TruncatedToolCallModel()
-    app_context.app.state.generation_manager = GenerationManager(
+    app_context.app.state.generation_runtime = GenerationRuntime(
         AgentTurnExecutor(
             app_context.session_factory,
             Path(app_context.app.state.settings.workspace_root),
@@ -719,7 +712,7 @@ async def test_tool_argument_error_is_returned_to_model_and_recovered(
         Path(app_context.app.state.settings.workspace_root),
         lambda _: RecoveringToolModel(),
     )
-    app_context.app.state.generation_manager = GenerationManager(executor)
+    app_context.app.state.generation_runtime = GenerationRuntime(executor)
 
     response = await app_context.client.post(
         "/api/app/chat/gen/code",
@@ -746,7 +739,7 @@ async def test_unavailable_model_returns_readable_failed_turn(
         Path(app_context.app.state.settings.workspace_root),
         lambda _: UnavailableAgentModel(),
     )
-    app_context.app.state.generation_manager = GenerationManager(executor)
+    app_context.app.state.generation_runtime = GenerationRuntime(executor)
 
     response = await app_context.client.post(
         "/api/app/chat/gen/code",
@@ -767,7 +760,7 @@ async def test_multi_file_generation_writes_three_files_and_previews(
     app_context: AppContext,
 ) -> None:
     app_context.app.state.code_gen_type_router = StaticCodeGenTypeRouter(CodeGenType.MULTI_FILE)
-    app_context.app.state.generation_manager = GenerationManager(
+    app_context.app.state.generation_runtime = GenerationRuntime(
         AgentTurnExecutor(
             app_context.session_factory,
             Path(app_context.app.state.settings.workspace_root),
@@ -834,9 +827,7 @@ async def test_multi_file_generation_writes_three_files_and_previews(
         )
     assert tool_rows == 3
 
-    history_data = (
-        await app_context.client.get(f"/api/chatHistory/app/{app_id}")
-    ).json()["data"]
+    history_data = (await app_context.client.get(f"/api/chatHistory/app/{app_id}")).json()["data"]
     parts = history_data["partsByTurn"]["turn-multi-file"]
     assert [part["type"] for part in parts] == [
         "assistant_text",
@@ -889,7 +880,7 @@ async def test_multi_file_follow_up_edits_existing_files(
 ) -> None:
     app_context.app.state.code_gen_type_router = StaticCodeGenTypeRouter(CodeGenType.MULTI_FILE)
     model = MultiFileEditModel()
-    app_context.app.state.generation_manager = GenerationManager(
+    app_context.app.state.generation_runtime = GenerationRuntime(
         AgentTurnExecutor(
             app_context.session_factory,
             Path(app_context.app.state.settings.workspace_root),
@@ -949,7 +940,7 @@ class RepairingVueBuilder(VueProjectBuilder):
 async def test_vue_build_failure_is_fed_back_for_repair(app_context: AppContext) -> None:
     app_context.app.state.code_gen_type_router = StaticCodeGenTypeRouter(CodeGenType.VUE_PROJECT)
     builder = RepairingVueBuilder()
-    app_context.app.state.generation_manager = GenerationManager(
+    app_context.app.state.generation_runtime = GenerationRuntime(
         AgentTurnExecutor(
             app_context.session_factory,
             Path(app_context.app.state.settings.workspace_root),

@@ -3,13 +3,13 @@ from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any
 
-from app.runtime.hooks import HookBus
-from app.runtime.journal import NullTurnJournal
-from app.runtime.loop import AgentLoop, TurnState
-from app.runtime.messages import UserMessage
-from app.runtime.model import AgentModel
-from app.runtime.tools import ToolRegistry
-from app.runtime.workspace import Workspace
+from app.generation.adapters.tools import ToolRegistry
+from app.generation.adapters.workspace import Workspace
+from app.generation.application.hooks import HookBus
+from app.generation.application.loop import AgentLoop, TurnState
+from app.generation.domain.messages import UserMessage
+from app.generation.ports.journal import NullTurnJournal
+from app.generation.ports.model import AgentModel
 
 SubagentEmitter = Callable[[str, dict[str, Any]], Awaitable[None]]
 _APP_LOCKS: dict[Path, asyncio.Lock] = {}
@@ -91,8 +91,7 @@ class SubagentRunner:
             messages=[
                 UserMessage(
                     content=(
-                        "你是受控子代理。只处理指定目录内任务，不得提问或执行 shell。"
-                        f"任务：{task}"
+                        f"你是受控子代理。只处理指定目录内任务，不得提问或执行 shell。任务：{task}"
                     )
                 )
             ],

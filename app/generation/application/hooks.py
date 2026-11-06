@@ -3,9 +3,9 @@ from collections.abc import Awaitable, Callable, Iterable
 from dataclasses import dataclass, replace
 from typing import Any, Literal
 
-from app.runtime.messages import ToolCall
-from app.runtime.model import ModelReply, ModelRequest
-from app.runtime.tools import ToolExecutionResult
+from app.generation.domain.messages import ToolCall
+from app.generation.ports.model import ModelReply, ModelRequest
+from app.generation.ports.tools import ToolExecutionResult
 
 logger = logging.getLogger(__name__)
 
@@ -64,7 +64,7 @@ class AfterToolContext:
 @dataclass(frozen=True)
 class TurnFinishedContext:
     turn_id: str
-    status: Literal["completed", "failed"]
+    status: Literal["completed", "failed", "interrupted"]
     assistant_text: str = ""
 
 

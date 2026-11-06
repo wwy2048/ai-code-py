@@ -14,8 +14,8 @@ from app.codegen_router import CodeGenType
 from app.config import Settings
 from app.db import Base
 from app.db import create_engine as create_db_engine
+from app.generation.adapters.model import ScriptedHtmlModel
 from app.main import create_app
-from app.runtime.model import ScriptedHtmlModel
 
 
 class NoopCoverScheduler:

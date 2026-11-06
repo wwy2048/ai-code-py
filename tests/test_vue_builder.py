@@ -4,7 +4,7 @@ from typing import Any
 
 import pytest
 
-from app.runtime.vue_project import VueProjectBuilder
+from app.generation.adapters.vue_project import VueProjectBuilder
 
 
 def test_vue_builder_reports_success_failure_timeout_and_truncation(

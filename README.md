@@ -16,6 +16,7 @@ Python 全量重写 ai-code 的后端与 Agent Runtime。
 
 - [重构开发复盘](docs/development-retrospective.md)
 - [领域术语](CONTEXT.md)
+- [生成运行时分层架构](docs/architecture/generation-runtime.md)
 - [架构决策记录](docs/adr/)
 
 ## 当前能力
@@ -25,6 +26,8 @@ Python 全量重写 ai-code 的后端与 Agent Runtime。
 - 根据初始需求路由 HTML / MULTI_FILE / VUE_PROJECT
 - 旧 App 通过 `/api/static/{codeGenType}_{appId}/` 预览
 - 真实 DeepSeek HTML / MULTI_FILE Agent 流式工具循环、结构化 POST SSE、requestId 去重与断线续传
+- 事件驱动生成运行时：`app/generation` 按 domain / ports / application / adapters 分层，每个 App 独立收件箱与常驻 worker，通过端口适配模型、MySQL、工具和 SSE
+- 运行中支持插话、停止和安全转向；控制接口为 `POST /api/app/chat/turn/control`，前端提供最小控制入口
 - 模型调用耗时、token、状态与脱敏错误摘要记录，并区分生成调用和压缩调用
 - `chat_history` 保存 user / assistant / tool 运行时消息，并区分 visible / active
 - 根据 provider token usage 在 Turn 边界自动压缩旧上下文，保留最近完整 Turn 和隐藏摘要

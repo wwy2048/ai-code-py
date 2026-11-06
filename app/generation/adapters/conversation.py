@@ -1,11 +1,11 @@
-from app.runtime.conversation import ConversationStore
-from app.runtime.messages import AssistantMessage, ToolCall
-from app.runtime.model import ModelCallStatus
-from app.runtime.tools import ToolExecutionResult
+from app.generation.adapters.conversation_store import ConversationStore
+from app.generation.domain.messages import AssistantMessage, ToolCall
+from app.generation.ports.model import ModelCallStatus
+from app.generation.ports.tools import ToolExecutionResult
 
 
 class ConversationJournal:
-    """把 TurnJournal 端口适配到 ConversationStore。"""
+    """把 TurnJournal 端口适配到 MySQL ChatHistory。"""
 
     def __init__(self, store: ConversationStore) -> None:
         self._store = store
@@ -15,6 +15,9 @@ class ConversationJournal:
 
     async def append_assistant(self, message: AssistantMessage, *, batch_id: str | None) -> None:
         await self._store.append_assistant(message.content, batch_id=batch_id)
+
+    async def append_assistant_placeholder(self, *, batch_id: str) -> None:
+        await self._store.append_assistant_placeholder(batch_id=batch_id)
 
     async def append_tool_call(self, call: ToolCall, *, batch_id: str) -> None:
         await self._store.append_tool_call(call, batch_id=batch_id)

@@ -8,13 +8,13 @@ from conftest import AppContext, StaticCodeGenTypeRouter
 from sqlalchemy import select
 
 from app.codegen_router import CodeGenType
+from app.generation.adapters.conversation_store import ConversationStore
+from app.generation.adapters.executor import AgentTurnExecutor
+from app.generation.adapters.model import ModelReply, ModelRequest, TextEmitter, ToolCall
+from app.generation.adapters.vue_project import BuildResult, VueProjectBuilder
+from app.generation.application.runtime import GenerationRuntime
+from app.generation.domain.messages import AssistantMessage, ToolResultMessage, UserMessage
 from app.models import ChatHistory
-from app.runtime.agent import AgentTurnExecutor
-from app.runtime.conversation import ConversationStore
-from app.runtime.manager import GenerationManager
-from app.runtime.messages import AssistantMessage, ToolResultMessage, UserMessage
-from app.runtime.model import ModelReply, ModelRequest, TextEmitter, ToolCall
-from app.runtime.vue_project import BuildResult, VueProjectBuilder
 
 
 async def _register_login_and_create_app(
@@ -393,7 +393,7 @@ async def test_follow_up_restores_prior_active_context_after_relogin(
         code_gen_type=code_gen_type,
     )
     model = ContextAwareModel(write_path)
-    app_context.app.state.generation_manager = GenerationManager(
+    app_context.app.state.generation_runtime = GenerationRuntime(
         AgentTurnExecutor(
             app_context.session_factory,
             Path(app_context.app.state.settings.workspace_root),
@@ -453,9 +453,7 @@ async def test_follow_up_restores_prior_active_context_after_relogin(
     )
     assert (workspace / write_path).read_text(encoding="utf-8") == "<h1>follow-up</h1>"
 
-    history_data = (await app_context.client.get(f"/api/chatHistory/app/{app_id}")).json()[
-        "data"
-    ]
+    history_data = (await app_context.client.get(f"/api/chatHistory/app/{app_id}")).json()["data"]
     visible = history_data["records"]
     assert [record["messageType"] for record in visible].count("user") == 2
     assert [record["messageType"] for record in visible].count("ai") == 4

@@ -1,19 +1,19 @@
 from pathlib import Path
 from typing import Any
 
-from app.runtime.hooks import (
+from app.generation.adapters.model import ModelReply, ModelRequest, TextEmitter, ToolCall
+from app.generation.adapters.tools import ToolExecutionResult, ToolRegistry
+from app.generation.adapters.workspace import Workspace
+from app.generation.application.hooks import (
     AfterToolContext,
     BeforeToolContext,
     BeforeToolOutcome,
     HookBus,
     HookSet,
 )
-from app.runtime.journal import NullTurnJournal
-from app.runtime.loop import AgentLoop, TurnState
-from app.runtime.messages import ToolResultMessage, UserMessage
-from app.runtime.model import ModelReply, ModelRequest, TextEmitter, ToolCall
-from app.runtime.tools import ToolExecutionResult, ToolRegistry
-from app.runtime.workspace import Workspace
+from app.generation.application.loop import AgentLoop, TurnState
+from app.generation.domain.messages import ToolResultMessage, UserMessage
+from app.generation.ports.journal import NullTurnJournal
 
 
 class OneToolModel:

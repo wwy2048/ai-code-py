@@ -105,3 +105,43 @@ export const streamGeneration = async ({
     }
   }
 }
+export type TurnControlAction = 'steer' | 'interrupt' | 'redirect'
+
+export interface TurnControlAck {
+  status: 'accepted' | 'duplicate' | 'not_active' | 'stale' | 'degraded_to_followup'
+  action: TurnControlAction
+  appId: number
+  turnId: string
+  commandId: string
+  message?: string | null
+}
+
+interface SendTurnControlOptions {
+  baseURL: string
+  appId: number
+  turnId: string
+  action: TurnControlAction
+  commandId: string
+  message?: string
+}
+
+export const sendTurnControl = async ({
+  baseURL,
+  appId,
+  turnId,
+  action,
+  commandId,
+  message,
+}: SendTurnControlOptions): Promise<TurnControlAck> => {
+  const response = await fetch(`${baseURL}/app/chat/turn/control`, {
+    method: 'POST',
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ appId, turnId, action, commandId, message }),
+  })
+  const payload = await response.json()
+  if (!response.ok || payload.code !== 0 || !payload.data) {
+    throw new Error(payload.message || '控制命令发送失败')
+  }
+  return payload.data as TurnControlAck
+}

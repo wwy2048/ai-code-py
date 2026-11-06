@@ -7,14 +7,11 @@ from conftest import AppContext
 from sqlalchemy import select
 
 from app.config import Settings
-from app.models import ChatHistory, ModelCallLog
-from app.runtime.agent import AgentTurnExecutor
-from app.runtime.anthropic_model import AnthropicHtmlModel
-from app.runtime.compaction import ContextCompactor
-from app.runtime.conversation import ConversationStore, MessageKind
-from app.runtime.manager import GenerationManager
-from app.runtime.messages import AssistantMessage, ToolResultMessage, UserMessage
-from app.runtime.model import (
+from app.generation.adapters.anthropic_model import AnthropicHtmlModel
+from app.generation.adapters.compaction import ContextCompactor
+from app.generation.adapters.conversation_store import ConversationStore, MessageKind
+from app.generation.adapters.executor import AgentTurnExecutor
+from app.generation.adapters.model import (
     ModelCallStatus,
     ModelReply,
     ModelRequest,
@@ -22,7 +19,10 @@ from app.runtime.model import (
     TextEmitter,
     ToolCall,
 )
-from app.runtime.tools import ToolExecutionResult
+from app.generation.adapters.tools import ToolExecutionResult
+from app.generation.application.runtime import GenerationRuntime
+from app.generation.domain.messages import AssistantMessage, ToolResultMessage, UserMessage
+from app.models import ChatHistory, ModelCallLog
 
 
 async def _register_login_and_create_app(
@@ -579,9 +579,7 @@ async def test_compaction_runs_through_anthropic_transport_and_persists_summary(
     assert outcome.compacted is True
     assert client.messages.request is not None
     assert "tools" not in client.messages.request
-    assert active_messages[0] == UserMessage(
-        content="[会话压缩摘要]\ntransport-summary"
-    )
+    assert active_messages[0] == UserMessage(content="[会话压缩摘要]\ntransport-summary")
     async with app_context.session_factory() as session:
         summary_log = await session.scalar(
             select(ModelCallLog).where(
@@ -721,7 +719,7 @@ async def test_agent_emits_compaction_events_and_continues_with_summary_context(
         usage=(850, 50),
     )
     model = CompactionAgentModel()
-    app_context.app.state.generation_manager = GenerationManager(
+    app_context.app.state.generation_runtime = GenerationRuntime(
         AgentTurnExecutor(
             app_context.session_factory,
             Path(app_context.app.state.settings.workspace_root),

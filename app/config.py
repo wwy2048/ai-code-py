@@ -46,6 +46,7 @@ class Settings(BaseSettings):
     model_max_retries: int = 3
     agent_max_rounds_per_phase: int = 12
     agent_max_validation_repairs: int = 3
+    generation_event_buffer_limit: int = 4096
 
     workspace_root: str = str(_PROJECT_ROOT / "tmp/codeOutput")
     deploy_root: str = str(_PROJECT_ROOT / "tmp/code_deploy")

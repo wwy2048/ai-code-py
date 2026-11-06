@@ -5,9 +5,14 @@ from types import SimpleNamespace
 from typing import Any
 
 from app.config import Settings
-from app.runtime.anthropic_model import AnthropicHtmlModel
-from app.runtime.messages import AssistantMessage, ToolCall, ToolResultMessage, UserMessage
-from app.runtime.model import ModelCallError, ModelRequest
+from app.generation.adapters.anthropic_model import AnthropicHtmlModel
+from app.generation.adapters.model import ModelCallError, ModelRequest
+from app.generation.domain.messages import (
+    AssistantMessage,
+    ToolCall,
+    ToolResultMessage,
+    UserMessage,
+)
 
 
 class FakeStream:

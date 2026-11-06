@@ -3,9 +3,9 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any, Protocol
 
-from app.runtime.tools import ToolExtension
-from app.runtime.vue_project import VueProjectBuilder, VueProjectTemplate
-from app.runtime.workspace import Workspace
+from app.generation.adapters.vue_project import VueProjectBuilder, VueProjectTemplate
+from app.generation.adapters.workspace import Workspace
+from app.generation.ports.tools import ToolExtension
 
 EventEmitter = Callable[[str, dict[str, Any]], Awaitable[None]]
 

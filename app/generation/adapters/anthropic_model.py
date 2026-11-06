@@ -12,14 +12,19 @@ from anthropic import (
 )
 
 from app.config import Settings
-from app.runtime.messages import AgentMessage, AssistantMessage, ToolResultMessage, UserMessage
-from app.runtime.model import (
+from app.generation.domain.messages import (
+    AgentMessage,
+    AssistantMessage,
+    ToolCall,
+    ToolResultMessage,
+    UserMessage,
+)
+from app.generation.ports.model import (
     ModelCallError,
     ModelReply,
     ModelRequest,
     SummaryResult,
     TextEmitter,
-    ToolCall,
 )
 
 
@@ -42,10 +47,10 @@ class AnthropicCodeModel:
         self._max_retries = settings.model_max_retries
         self._retry_base_seconds = settings.model_retry_base_seconds
         self._system_prompt = (
-            Path(__file__).parent.parent / "prompts" / self.prompt_file
+            Path(__file__).resolve().parents[2] / "prompts" / self.prompt_file
         ).read_text(encoding="utf-8")
         self._compaction_system_prompt = (
-            Path(__file__).parent.parent / "prompts" / "context-compaction-system-prompt.txt"
+            Path(__file__).resolve().parents[2] / "prompts" / "context-compaction-system-prompt.txt"
         ).read_text(encoding="utf-8")
 
     @property

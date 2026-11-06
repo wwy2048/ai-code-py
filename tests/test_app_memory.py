@@ -3,12 +3,12 @@ from pathlib import Path
 from conftest import AppContext
 from sqlalchemy import func, select
 
+from app.generation.adapters.executor import AgentTurnExecutor
+from app.generation.adapters.memory import MemoryStore
+from app.generation.adapters.model import ModelReply, ModelRequest, TextEmitter, ToolCall
+from app.generation.application.runtime import GenerationRuntime
+from app.generation.domain.messages import ToolResultMessage, UserMessage
 from app.models import AppMemory
-from app.runtime.agent import AgentTurnExecutor
-from app.runtime.manager import GenerationManager
-from app.runtime.memory import MemoryStore
-from app.runtime.messages import ToolResultMessage, UserMessage
-from app.runtime.model import ModelReply, ModelRequest, TextEmitter, ToolCall
 
 
 async def _register_login_and_create_app(app_context: AppContext, account: str) -> tuple[int, int]:
@@ -96,7 +96,7 @@ async def test_memory_is_isolated_budgeted_and_not_injected_when_disabled(
         memory_enabled=False,
         memory_max_chars=120,
     )
-    app_context.app.state.generation_manager = GenerationManager(executor)
+    app_context.app.state.generation_runtime = GenerationRuntime(executor)
     await app_context.client.post(
         "/api/app/chat/gen/code",
         json={"appId": first_app, "message": "继续修改", "requestId": "memory-off"},
@@ -104,7 +104,7 @@ async def test_memory_is_isolated_budgeted_and_not_injected_when_disabled(
     assert all("应用持久记忆" not in str(message) for message in model.requests[0])
 
     enabled_model = MemoryCaptureModel()
-    app_context.app.state.generation_manager = GenerationManager(
+    app_context.app.state.generation_runtime = GenerationRuntime(
         AgentTurnExecutor(
             app_context.session_factory,
             Path(app_context.app.state.settings.workspace_root),

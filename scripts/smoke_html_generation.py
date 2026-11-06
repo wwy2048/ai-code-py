@@ -15,8 +15,9 @@ from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from app.config import get_settings
 from app.db import Base, create_engine
-from app.runtime.agent import AgentTurnExecutor
-from app.runtime.factory import create_agent_model_factory
+from app.generation.adapters.executor import AgentTurnExecutor
+from app.generation.adapters.factory import create_agent_model_factory
+from app.generation.domain.commands import StartTurnCommand
 
 
 async def run_smoke(code_gen_type: str) -> None:
@@ -41,11 +42,13 @@ async def run_smoke(code_gen_type: str) -> None:
             print(f"[{event}] {payload}")
 
         await executor.execute(
-            app_id=1,
-            user_id=1,
-            code_gen_type=code_gen_type,
-            prompt="创建一个现代简洁的个人作品集单页网站，深色主题",
-            turn_id=f"smoke-{uuid.uuid4().hex}",
+            StartTurnCommand(
+                app_id=1,
+                user_id=1,
+                code_gen_type=code_gen_type,
+                message="创建一个现代简洁的个人作品集单页网站，深色主题",
+                turn_id=f"smoke-{uuid.uuid4().hex}",
+            ),
             emit=emit,
         )
 

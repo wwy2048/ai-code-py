@@ -1,6 +1,7 @@
 from datetime import datetime
+from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 from pydantic.alias_generators import to_camel
 
 
@@ -137,3 +138,16 @@ class GenerationRequest(ApiModel):
     app_id: int
     message: str = Field(min_length=1, max_length=10000)
     request_id: str = Field(min_length=1, max_length=64)
+
+class GenerationControlRequest(ApiModel):
+    app_id: int
+    turn_id: str = Field(min_length=1, max_length=64)
+    action: Literal["steer", "interrupt", "redirect"]
+    message: str | None = Field(default=None, max_length=10000)
+    command_id: str = Field(min_length=1, max_length=64)
+
+    @model_validator(mode="after")
+    def require_message_for_text_actions(self) -> "GenerationControlRequest":
+        if self.action in {"steer", "redirect"} and not (self.message or "").strip():
+            raise ValueError(f"{self.action} 必须携带 message")
+        return self
