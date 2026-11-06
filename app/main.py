@@ -59,7 +59,7 @@ def create_app(
         await app.state.redis.aclose()
         await app.state.engine.dispose()
 
-    app = FastAPI(title="ai-code-py", lifespan=lifespan)
+    app = FastAPI(title="CluckAI API", lifespan=lifespan)
     app.state.settings = app_settings
     app.state.engine = app_engine
     app.state.redis = app_redis
