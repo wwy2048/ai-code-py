@@ -78,8 +78,12 @@
                   :key="`${message.id || index}-${block.type === 'tool_group' ? block.groupId : block.batchId || blockIndex}-${blockIndex}`"
                   class="assistant-block"
                 >
+                  <div
+                    v-if="block.type === 'text' && block.content && block.streaming"
+                    class="streaming-text"
+                  >{{ block.content }}</div>
                   <MarkdownRenderer
-                    v-if="block.type === 'text' && block.content"
+                    v-else-if="block.type === 'text' && block.content"
                     :content="block.content"
                   />
                   <ToolActivityGroup
@@ -337,6 +341,7 @@ interface TextChatBlock {
   type: 'text'
   batchId?: string
   content: string
+  streaming?: boolean
 }
 
 interface ToolGroupChatBlock {
@@ -854,24 +859,77 @@ const generateCode = async (
   }
 
   let liveToolGroupSeq = 0
+  let pendingRenderText = ''
+  let activeTextBlock: TextChatBlock | null = null
+  let typewriterFrame: number | null = null
 
-  // 同一模型轮次的增量文本进入同一个文本块；可见文本是工具折叠组的边界。
+  const scheduleTypewriter = () => {
+    if (typewriterFrame !== null) return
+    typewriterFrame = window.requestAnimationFrame(renderTypewriterFrame)
+  }
+
+  const renderTypewriterFrame = () => {
+    typewriterFrame = null
+    if (!activeTextBlock || !pendingRenderText) return
+    const backlog = pendingRenderText.length
+    const take = backlog > 48 ? 6 : backlog > 16 ? 3 : 1
+    activeTextBlock.content += pendingRenderText.slice(0, take)
+    pendingRenderText = pendingRenderText.slice(take)
+    refreshContent()
+    scrollToBottom()
+    if (pendingRenderText) scheduleTypewriter()
+  }
+
+  const flushTypewriter = (finalize = false) => {
+    if (typewriterFrame !== null) {
+      window.cancelAnimationFrame(typewriterFrame)
+      typewriterFrame = null
+    }
+    if (activeTextBlock && pendingRenderText) {
+      activeTextBlock.content += pendingRenderText
+      pendingRenderText = ''
+      refreshContent()
+      scrollToBottom()
+    }
+    if (finalize && activeTextBlock) {
+      activeTextBlock.streaming = false
+      activeTextBlock = null
+    }
+  }
+
+  const cancelTypewriter = () => {
+    if (typewriterFrame !== null) {
+      window.cancelAnimationFrame(typewriterFrame)
+      typewriterFrame = null
+    }
+    pendingRenderText = ''
+    activeTextBlock = null
+  }
+
+  // 后端 chunk 先进入显示缓冲，再由 rAF 按帧吐出，避免合并后的整块文本一次上屏。
   const appendText = (content: string, batchId = '') => {
     if (!content) return
     const blocks = getBlocks()
     const last = blocks[blocks.length - 1]
+    let block: TextChatBlock
     if (last?.type === 'text' && (last.batchId || '') === batchId) {
-      last.content += content
+      block = last
     } else {
-      blocks.push({ type: 'text', batchId: batchId || undefined, content })
+      flushTypewriter(true)
+      block = { type: 'text', batchId: batchId || undefined, content: '', streaming: true }
+      blocks.push(block)
     }
+    if (activeTextBlock && activeTextBlock !== block) flushTypewriter(true)
+    activeTextBlock = block
+    block.streaming = true
+    pendingRenderText += content
     messages.value[aiMessageIndex].loading = false
-    refreshContent()
-    scrollToBottom()
+    scheduleTypewriter()
   }
 
   // 连续工具调用无论来自几个 batch，都归入文本边界内的同一个折叠组。
   const ensureToolGroup = (): ToolGroupChatBlock => {
+    flushTypewriter(true)
     const blocks = getBlocks()
     const last = blocks[blocks.length - 1]
     if (last?.type === 'tool_group') return last
@@ -977,12 +1035,15 @@ const generateCode = async (
         // 用户消息由 App 队列流统一落 UI，避免 Turn SSE 与队列 SSE 重复插入。
         break
       case 'step_cancelled':
+        flushTypewriter(false)
         appendControlNote('> 当前模型步已取消，正在安全收口。')
         break
       case 'redirect_applied':
+        flushTypewriter(false)
         appendControlNote(`> 已转向：${String(data.texts || '')}`)
         break
       case 'turn_interrupted':
+        flushTypewriter(false)
         appendControlNote('> 本轮已中断。')
         break
       case 'stream_gap':
@@ -991,6 +1052,7 @@ const generateCode = async (
         break
 
       case 'turn_finished': {
+        flushTypewriter(true)
         const finishedTurnId = String(data.turnId || requestId)
         const messageItem = messages.value[aiMessageIndex]
         if (messageItem) {
@@ -1032,6 +1094,7 @@ const generateCode = async (
       onEvent: handleEvent,
     })
   } catch (error) {
+    cancelTypewriter()
     if (!activeAbortController.signal.aborted) handleError(error, aiMessageIndex)
   }
 }
@@ -1351,6 +1414,12 @@ onUnmounted(() => {
 
 .assistant-block + .assistant-block {
   margin-top: 10px;
+}
+
+.streaming-text {
+  white-space: pre-wrap;
+  line-height: 1.65;
+  word-break: break-word;
 }
 
 .load-more-container {
