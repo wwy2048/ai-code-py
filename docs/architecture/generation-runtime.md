@@ -4,11 +4,11 @@
 
 `app/generation` 是生成链路的限界上下文，负责：
 
-- 接收启动、插话、停止和转向命令；
-- 调度每个 App 的 Turn；
-- 管理 Turn 内部控制状态；
-- 执行模型/工具循环；
-- 发布有序出站事件；
+- 通过双向事件总线接收入站用户消息与 interrupt；
+- 为每个 App 维护 followup、steering、paused 收件箱和常驻 worker；
+- 调度 Turn、维护 Turn 内部控制状态；
+- 执行模型/工具循环并发布有序出站事件；
+- 将收件箱状态投影为 App 级队列 SSE；
 - 通过端口适配 MySQL、模型、文件工具和 SSE。
 
 HTTP、数据库、Anthropic SDK、文件系统和 SSE 都不属于领域层。
@@ -17,27 +17,28 @@ HTTP、数据库、Anthropic SDK、文件系统和 SSE 都不属于领域层。
 
 ```text
 app/generation/
-├── domain/                 # 纯领域模型，不依赖 asyncio、DB、FastAPI
-│   ├── commands.py         # StartTurn / Steer / Interrupt / Redirect
-│   ├── events.py           # EventType / EventEnvelope
+├── domain/
+│   ├── events.py           # 入站事件、出站事件、Mailbox、订阅约束
+│   ├── turns.py            # TurnRequest 执行 DTO
 │   └── messages.py         # 模型上下文消息
-├── ports/                  # 内层定义的对外契约
-│   ├── model.py            # AgentModel / ModelRequest / ModelReply
-│   ├── journal.py          # TurnJournal
-│   ├── tools.py            # ToolExecutor / ToolExtension / ToolResult
-│   └── turn.py             # TurnExecutor / TurnExecutionResult
-├── application/            # 用例编排，只依赖 domain + ports
-│   ├── bus.py              # 出站事件总线
+├── ports/
+│   ├── model.py
+│   ├── journal.py
+│   ├── tools.py
+│   └── turn.py
+├── application/
+│   ├── bus.py              # 双向 EventBus：publish / emit
 │   ├── control.py          # Turn 控制状态
-│   ├── hooks.py            # 强类型生命周期 Hook
-│   ├── inbox.py            # App 收件箱与会话 worker
-│   ├── loop.py             # 模型/工具循环
-│   ├── runtime.py          # GenerationRuntime 应用门面
-│   └── stream.py           # Turn 重放缓冲与 SSE 编码
-└── adapters/               # 外层实现
-    ├── conversation.py     # TurnJournal -> ChatHistory
+│   ├── hooks.py
+│   ├── inbox.py            # per-App GenerationAgent 与同步队列操作
+│   ├── loop.py
+│   ├── projection.py       # QueueProjection 与 App 队列 replay
+│   ├── runtime.py          # AgentRegistry、TurnJob 和全局生命周期
+│   └── stream.py           # Turn replay、SSE 编码、流事件合并
+└── adapters/
+    ├── conversation.py
     ├── conversation_store.py
-    ├── executor.py         # 组装模型、工具、Workspace 和 Journal
+    ├── executor.py
     ├── anthropic_model.py
     ├── codegen.py
     ├── tools.py
@@ -45,65 +46,91 @@ app/generation/
     └── ...
 ```
 
-## 3. 依赖规则
+## 3. 双向事件总线
 
 ```text
-API / SSE / Frontend
+用户消息 / interrupt
         │
-        ▼
-GenerationRuntime ──────► EventBus / TurnJob
+        └─ EventBus.publish(event, to=app_id)
+               │  同步
+               ▼
+        GenerationAgent.enqueue
+               │
+        followup / steering / paused inbox
+
+promote / delete / resume / clear
         │
-        ▼
-AppSession / Worker / TurnControl / AgentLoop
-        │
-        ├──────────────► ports
-        │                  │
-        ▼                  ▼
-     domain            adapter interfaces
-                           ▲
-                           │
-                    generation/adapters
+        └─ 同步 Inbox 方法 ──> QueueProjection.apply_mutation
 ```
 
-- `domain` 只依赖 Python 标准库。
-- `ports` 只依赖 `domain`。
-- `application` 只依赖 `domain` 和 `ports`。
-- `adapters` 依赖 `application/ports/domain`，并实现外层技术细节。
-- `app/api` 只把 HTTP 请求转换为命令，把出站事件转换为 SSE。
-- 旧 `app/runtime` 目录已删除，生成链路不再保留旧运行时兼容层。
+- 入站只做同步投递，不执行 Turn。
+- 出站由 `EventBus.emit` 异步分派。
+- `StreamEvent` 只允许 `Mailbox` 消费者订阅。
+- 队列操作是同步结构操作，不经过事件总线。
 
-## 4. 一次 Turn 的数据流
+## 4. Per-App Generation Agent
+
+```text
+GenerationRuntime
+├── EventBus
+└── AgentRegistry: app_id -> GenerationAgent
+
+GenerationAgent
+├── direct inbox
+├── followup inbox
+├── steering inbox
+├── hidden inbox
+├── paused inbox
+├── active Turn
+└── worker
+```
+
+- 同一 App 任意时刻最多执行一个 Turn。
+- steering 优先于 followup；同一类内部按优先级和到达顺序。
+- 收件箱直接持有原始 `UserMessage`，移动和消费过程中 ID 不变。
+
+## 5. 一次 Turn 的数据流
 
 ```text
 POST /chat/gen/code
-  -> StartTurnCommand
+  -> TurnRequest
   -> GenerationRuntime.start_turn
-  -> AppSession.followup inbox
-  -> SessionWorker
+  -> EventBus.publish(UserMessage(direct))
+  -> GenerationAgent.direct inbox
+  -> worker
   -> TurnExecutor adapter
   -> AgentLoop
        ├─ model step
        ├─ tool execution
-       ├── steering drain
-       └─ interrupt / redirect safe point
-  -> EventBus
-  -> TurnJob replay buffer
-  -> SSE adapter
+       ├─ steering drain
+       └─ interrupt safe point
+  -> EventBus.emit(TurnEvent)
+       ├─ TurnJob mailbox   -> Turn SSE
+       └─ QueueProjection   -> App Queue SSE
 ```
 
-控制命令走旁路：
+## 6. 控制与队列
 
 ```text
 POST /chat/turn/control
-  -> SteerTurnCommand / InterruptTurnCommand / RedirectTurnCommand
-  -> GenerationRuntime.control
-  -> active TurnControl
-  -> 下一模型步边界 / 当前模型流取消
+  ├─ steer     -> EventBus.publish(UserMessage(intent=steering))
+  └─ interrupt -> EventBus.publish(UserInterrupt)
 ```
 
-## 5. 事实与投影
+`redirect` 已从新事件模型移除，旧端点明确返回参数错误。
+
+```text
+POST /chat/queue/control
+  ├─ enqueue     -> EventBus.publish(UserMessage(intent=followup))
+  └─ steer/delete/resume/clear_paused
+                 -> GenerationAgent 同步方法
+```
+
+## 7. 事实与投影
 
 - ChatHistory 是 Turn 事实层。
 - `TurnJob` 只是进程内 SSE 重放缓冲，不是事实层。
-- `turn_lifecycle` 和中断占位写入 ChatHistory。
+- `QueueProjection` 是收件箱的读模型，不是队列事实层。
+- `USER_MESSAGE_COMMITTED` 与 `STEERING_CONSUMED` 由投影消费，生成用户消息同步事件。
+- 流式增量在 SSE 消费者侧按字符阈值或帧界合并，原始事件仍保存在 TurnJob replay buffer。
 - 超出重放窗口时发送 `stream_gap`，前端重新读取 ChatHistory。

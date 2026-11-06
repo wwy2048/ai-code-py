@@ -23,8 +23,8 @@ from app.generation.application.hooks import (
     TurnStartedContext,
 )
 from app.generation.application.loop import AgentLoop, TurnState
-from app.generation.domain.commands import StartTurnCommand
 from app.generation.domain.messages import AssistantMessage, UserMessage
+from app.generation.domain.turns import TurnRequest
 from app.generation.ports.model import AgentModel, ContextSummarizer
 from app.generation.ports.tools import ToolExtension
 from app.generation.ports.turn import EventEmitter, TurnController, TurnExecutionResult
@@ -75,7 +75,7 @@ class AgentTurnExecutor:
 
     async def execute(
         self,
-        command: StartTurnCommand,
+        command: TurnRequest,
         *,
         emit: EventEmitter,
         control: TurnController | None = None,

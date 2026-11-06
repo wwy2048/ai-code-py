@@ -13,20 +13,10 @@ from app.deps import AdminUser, CurrentUser, DbSession
 from app.download import WorkspaceArchiveError, build_workspace_zip
 from app.errors import BusinessError
 from app.generation.adapters.memory import MemoryStore
-from app.generation.domain.commands import (
-    ClearPausedFollowupsCommand,
-    ControlCommand,
-    DeleteQueuedCommand,
-    EnqueueFollowupCommand,
-    InterruptTurnCommand,
-    QueueCommand,
-    RedirectTurnCommand,
-    ResumeFollowupsCommand,
-    StartTurnCommand,
-    SteerQueuedCommand,
-    SteerTurnCommand,
-)
-from app.response import success
+from app.generation.application.inbox import QueueOperation
+from app.generation.domain.events import STEERING, UserInterrupt, UserMessage
+from app.generation.domain.turns import TurnRequest
+from app.response import ErrorCode, success
 from app.schemas import (
     AppAdminUpdateRequest,
     AppCreateRequest,
@@ -263,7 +253,7 @@ async def generate_code(
     app = await require_owned_app(session, payload.app_id, current_user.id)
     runtime = request.app.state.generation_runtime
     job = await runtime.start_turn(
-        StartTurnCommand(
+        TurnRequest(
             app_id=app.id,
             user_id=current_user.id,
             code_gen_type=app.code_gen_type or "html",
@@ -299,38 +289,33 @@ async def control_generation(
 ) -> dict:
     app = await require_owned_app(session, payload.app_id, current_user.id)
     runtime = request.app.state.generation_runtime
-    app_id = app.id
-    user_id = current_user.id
-    code_gen_type = app.code_gen_type or "html"
-    command: ControlCommand
     if payload.action == "steer":
-        command = SteerTurnCommand(
-            app_id=app_id,
-            user_id=user_id,
-            code_gen_type=code_gen_type,
-            turn_id=payload.turn_id,
-            command_id=payload.command_id,
-            text=payload.message or "",
+        ack = await runtime.publish_user_message(
+            UserMessage.create(
+                event_id=payload.command_id,
+                app_id=app.id,
+                user_id=current_user.id,
+                code_gen_type=app.code_gen_type or "html",
+                text=payload.message or "",
+                intent=STEERING,
+                target_turn_id=payload.turn_id,
+            )
         )
-    elif payload.action == "redirect":
-        command = RedirectTurnCommand(
-            app_id=app_id,
-            user_id=user_id,
-            code_gen_type=code_gen_type,
-            turn_id=payload.turn_id,
-            command_id=payload.command_id,
-            text=payload.message or "",
+    elif payload.action == "interrupt":
+        ack = await runtime.publish_interrupt(
+            UserInterrupt.create(
+                event_id=payload.command_id,
+                app_id=app.id,
+                user_id=current_user.id,
+                code_gen_type=app.code_gen_type or "html",
+                reason="stop",
+                target_turn_id=payload.turn_id,
+            )
         )
     else:
-        command = InterruptTurnCommand(
-            app_id=app_id,
-            user_id=user_id,
-            code_gen_type=code_gen_type,
-            turn_id=payload.turn_id,
-            command_id=payload.command_id,
-        )
-    ack = await runtime.control(command)
+        raise BusinessError(ErrorCode.PARAMS_ERROR, "redirect 已废弃")
     return success(ack.as_dict())
+
 
 @router.post("/chat/queue/control")
 async def control_generation_queue(
@@ -341,34 +326,18 @@ async def control_generation_queue(
 ) -> dict:
     app = await require_owned_app(session, payload.app_id, current_user.id)
     runtime = request.app.state.generation_runtime
-    command_id = payload.command_id
-    queue_command: QueueCommand
-    if payload.action == "enqueue":
-        queue_command = EnqueueFollowupCommand(
+    ack = await runtime.queue_control(
+        QueueOperation(
             app_id=app.id,
+            action=payload.action,
+            command_id=payload.command_id,
             user_id=current_user.id,
             code_gen_type=app.code_gen_type or "html",
-            message=payload.message or "",
-            command_id=command_id,
+            item_id=payload.item_id,
+            message=payload.message,
             clear_paused=payload.clear_paused,
         )
-    elif payload.action == "steer":
-        queue_command = SteerQueuedCommand(
-            app_id=app.id,
-            command_id=command_id,
-            item_id=payload.item_id or "",
-        )
-    elif payload.action == "delete":
-        queue_command = DeleteQueuedCommand(
-            app_id=app.id,
-            command_id=command_id,
-            item_id=payload.item_id or "",
-        )
-    elif payload.action == "resume":
-        queue_command = ResumeFollowupsCommand(app_id=app.id, command_id=command_id)
-    else:
-        queue_command = ClearPausedFollowupsCommand(app_id=app.id, command_id=command_id)
-    ack = await runtime.queue_control(queue_command)
+    )
     return success(ack.as_dict())
 
 

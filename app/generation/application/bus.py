@@ -1,40 +1,46 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
-from typing import Protocol, runtime_checkable
+from collections.abc import Callable
+from typing import Any
 
-from app.generation.domain.events import EventEnvelope, EventType
+from app.generation.domain.events import (
+    EventEnvelope,
+    InboundEvent,
+    Mailbox,
+    Subscription,
+    validate_subscription,
+)
 
 logger = logging.getLogger(__name__)
 
-
-Handler = Callable[[EventEnvelope], Awaitable[None]]
-
-
-@runtime_checkable
-class Mailbox(Protocol):
-    def offer(self, event: EventEnvelope) -> None: ...
-
-
-@dataclass(frozen=True)
-class Subscription:
-    name: str
-    event_types: tuple[EventType, ...] | tuple[str, ...]
-    handler: Mailbox | Handler
-
-    def matches(self, event_type: EventType) -> bool:
-        return event_type in self.event_types or "*" in self.event_types
+Sink = Callable[[InboundEvent], Any]
 
 
 class EventBus:
-    """进程内出站事件总线，只负责投递。"""
+    """双向事件总线：入站同步投递，出站异步分派。"""
 
     def __init__(self) -> None:
+        self._sinks: dict[int, Sink] = {}
         self._subscriptions: list[Subscription] = []
 
+    # -------------------------------------------------- inbound
+    def register(self, app_id: int, sink: Sink) -> None:
+        self._sinks[app_id] = sink
+
+    def unregister(self, app_id: int) -> None:
+        self._sinks.pop(app_id, None)
+
+    def publish(self, event: InboundEvent, *, to: int) -> Any:
+        """同步投递到 App Agent；只入箱/走旁路，不执行 Turn。"""
+        sink = self._sinks.get(to)
+        if sink is None:
+            raise KeyError(f"没有这个生成代理：{to!r}")
+        return sink(event)
+
+    # -------------------------------------------------- outbound
     def subscribe(self, subscription: Subscription) -> Subscription:
+        validate_subscription(subscription)
         self._subscriptions.append(subscription)
         return subscription
 
@@ -59,3 +65,6 @@ class EventBus:
                     event.type,
                     exc_info=True,
                 )
+
+
+__all__ = ["EventBus", "Mailbox", "Sink", "Subscription"]

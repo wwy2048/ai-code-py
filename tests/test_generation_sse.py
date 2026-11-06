@@ -18,8 +18,8 @@ from app.generation.adapters.model import (
 )
 from app.generation.adapters.vue_project import BuildResult, VueProjectBuilder
 from app.generation.application.runtime import GenerationRuntime
-from app.generation.domain.commands import StartTurnCommand
 from app.generation.domain.messages import ToolResultMessage, UserMessage
+from app.generation.domain.turns import TurnRequest
 from app.models import ChatHistory, ModelCallLog
 
 
@@ -226,7 +226,7 @@ async def test_generation_continues_without_an_active_subscriber(
     user_id, app_id = await _register_login_and_create_app(app_context)
     manager = app_context.app.state.generation_runtime
     job = await manager.start_turn(
-        StartTurnCommand(
+        TurnRequest(
             app_id=app_id,
             user_id=user_id,
             code_gen_type="html",

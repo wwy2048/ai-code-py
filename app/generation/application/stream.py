@@ -42,6 +42,8 @@ class TurnJob:
     next_sequence: int = 1
     max_events: int = 4096
     control: TurnControl = field(default_factory=TurnControl)
+    command_id: str | None = None
+    queued: bool = False
     _changed: asyncio.Event = field(default_factory=asyncio.Event)
     _first_retained_id: int = 1
     _subscription: object | None = None
@@ -118,6 +120,76 @@ class TurnJob:
             if pending or self.completed:
                 continue
             await self._changed.wait()
+
+
+async def coalesce_stream_events(
+    source: AsyncIterator[TurnEvent],
+    *,
+    max_chars: int = 96,
+    frame_seconds: float = 0.05,
+) -> AsyncIterator[TurnEvent]:
+    """把连续文本增量按字符数或帧界合并，其他事件即时透传。"""
+    queue: asyncio.Queue[TurnEvent | None] = asyncio.Queue()
+
+    async def produce() -> None:
+        try:
+            async for event in source:
+                await queue.put(event)
+        finally:
+            await queue.put(None)
+
+    producer = asyncio.create_task(produce(), name="turn-stream-producer")
+    merged: TurnEvent | None = None
+    chars = 0
+
+    def merge(batch: TurnEvent, text: str) -> TurnEvent:
+        data = {**batch.data, "text": text}
+        return TurnEvent(id=batch.id, event=batch.event, data=data)
+
+    try:
+        while True:
+            try:
+                event = await asyncio.wait_for(queue.get(), timeout=frame_seconds)
+            except TimeoutError:
+                if merged is not None:
+                    yield merged
+                    merged = None
+                    chars = 0
+                continue
+            if event is None:
+                if merged is not None:
+                    yield merged
+                break
+            if event.event == "text_delta":
+                if merged is None:
+                    merged = event
+                    chars = len(str(event.data.get("text", "")))
+                elif event.data.get("batchId") == merged.data.get("batchId"):
+                    chars += len(str(event.data.get("text", "")))
+                    combined = str(merged.data.get("text", "")) + str(
+                        event.data.get("text", "")
+                    )
+                    merged = merge(event, combined)
+                else:
+                    yield merged
+                    merged = event
+                    chars = len(str(event.data.get("text", "")))
+                if chars >= max_chars:
+                    yield merged
+                    merged = None
+                    chars = 0
+            else:
+                if merged is not None:
+                    yield merged
+                    merged = None
+                    chars = 0
+                yield event
+    finally:
+        producer.cancel()
+        try:
+            await producer
+        except asyncio.CancelledError:
+            pass
 
 
 def encode_sse(event: TurnEvent | QueueEvent) -> str:

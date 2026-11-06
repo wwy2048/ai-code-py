@@ -27,6 +27,7 @@ Python 全量重写 ai-code 的后端与 Agent Runtime。
 - 旧 App 通过 `/api/static/{codeGenType}_{appId}/` 预览
 - 真实 DeepSeek HTML / MULTI_FILE Agent 流式工具循环、结构化 POST SSE、requestId 去重与断线续传
 - 事件驱动生成运行时：`app/generation` 按 domain / ports / application / adapters 分层，每个 App 独立收件箱与常驻 worker，通过端口适配模型、MySQL、工具和 SSE
+- 双向事件总线：用户消息与 interrupt 走同步入站投递，Turn 与队列事实走出站订阅；每个 App 一个 GenerationAgent，队列编辑保持同步收件箱操作
 - 运行中支持插话、停止和安全转向；控制接口为 `POST /api/app/chat/turn/control`，前端提供最小控制入口
 - 运行中支持 Followup 排队、Steer、单条删除、暂停队列组级 Resume 与 App 级队列 SSE；用户消息只在后端消费排队项时落库
 - 模型调用耗时、token、状态与脱敏错误摘要记录，并区分生成调用和压缩调用

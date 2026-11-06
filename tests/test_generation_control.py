@@ -233,9 +233,7 @@ async def test_interrupt_cancels_model_step_and_finishes_interrupted(
     )
 
 
-async def test_redirect_reenters_same_turn_with_new_instruction(
-    app_context: AppContext,
-) -> None:
+async def test_redirect_is_rejected_as_deprecated(app_context: AppContext) -> None:
     user_id, app_id = await _prepare_app(app_context, "redirect-user")
     model = RedirectModel()
     _install_model(app_context, model)
@@ -257,30 +255,9 @@ async def test_redirect_reenters_same_turn_with_new_instruction(
             "commandId": "redirect-command-1",
         },
     )
-    assert control.json()["data"]["status"] == "accepted"
-    response = await asyncio.wait_for(generation, timeout=5)
-
-    events = _parse_sse(response.text)
-    event_types = [event["event"] for event in events]
-    assert "step_cancelled" in event_types
-    assert "redirect_applied" in event_types
-    assert events[-1]["event"] == "turn_finished"
-    assert events[-1]["data"]["status"] == "completed"
-    assert any(
-        event["event"] == "text_delta" and "新计划：蓝色主题" in event["data"].get("text", "")
-        for event in events
-    )
-
-    async with app_context.session_factory() as session:
-        rows = (
-            await session.scalars(
-                select(ChatHistory)
-                .where(ChatHistory.app_id == app_id)
-                .order_by(ChatHistory.sequence)
-            )
-        ).all()
-    assert any(row.message_kind == "user" and row.message == "改成蓝色主题" for row in rows)
-    assert sum(row.message_kind == "user" for row in rows) == 2
+    assert control.json()["code"] == 40000
+    model.release.set()
+    await asyncio.wait_for(generation, timeout=5)
 
 
 async def test_control_command_is_idempotent_and_stale_target_is_rejected(

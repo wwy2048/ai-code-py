@@ -1,10 +1,12 @@
 import asyncio
 
+import pytest
+
 from app.generation.application.bus import EventBus, Subscription
 from app.generation.application.runtime import GenerationRuntime
-from app.generation.application.stream import TurnJob
-from app.generation.domain.commands import StartTurnCommand
+from app.generation.application.stream import TurnEvent, TurnJob, coalesce_stream_events
 from app.generation.domain.events import EventEnvelope, EventType
+from app.generation.domain.turns import TurnRequest
 
 OutboundEvent = EventEnvelope
 
@@ -26,7 +28,7 @@ async def test_event_bus_delivers_to_mailbox_and_isolates_failed_observer() -> N
         del event
         raise RuntimeError("observer failed")
 
-    bus.subscribe(Subscription("broken", ("text_delta",), broken_handler))
+    bus.subscribe(Subscription("broken", ("tool_started",), broken_handler))
     event = OutboundEvent(
         type=EventType.TEXT_DELTA,
         app_id=1,
@@ -34,8 +36,16 @@ async def test_event_bus_delivers_to_mailbox_and_isolates_failed_observer() -> N
         sequence=1,
         payload={"text": "hello"},
     )
+    lifecycle = OutboundEvent(
+        type=EventType.TOOL_STARTED,
+        app_id=1,
+        turn_id="turn-1",
+        sequence=2,
+        payload={"name": "write_file"},
+    )
 
     await bus.emit(event)
+    await bus.emit(lifecycle)
 
     assert mailbox.events == [event]
 
@@ -73,7 +83,7 @@ async def test_manager_text_and_lifecycle_events_share_one_sequence() -> None:
     class FakeExecutor:
         async def execute(
             self,
-            command: StartTurnCommand,
+            command: TurnRequest,
             *,
             emit: object,
             control: object,
@@ -90,7 +100,7 @@ async def test_manager_text_and_lifecycle_events_share_one_sequence() -> None:
 
     manager = GenerationRuntime(FakeExecutor())  # type: ignore[arg-type]
     job = await manager.start_turn(
-        StartTurnCommand(
+        TurnRequest(
             app_id=1,
             user_id=1,
             code_gen_type="html",
@@ -104,3 +114,50 @@ async def test_manager_text_and_lifecycle_events_share_one_sequence() -> None:
                 await job.condition.wait()
     assert [event.id for event in job.events] == list(range(1, len(job.events) + 1))
     await manager.shutdown()
+
+def test_stream_event_rejects_await_handler() -> None:
+    async def handler(event: OutboundEvent) -> None:
+        del event
+
+    bus = EventBus()
+    with pytest.raises(ValueError, match="Mailbox"):
+        bus.subscribe(Subscription("bad-stream", ("text_delta",), handler))
+
+
+async def test_inbound_publish_routes_to_registered_sink() -> None:
+    from app.generation.domain.events import UserMessage
+
+    received: list[UserMessage] = []
+
+    class SinkResult:
+        status = "accepted"
+
+    def sink(event: object) -> SinkResult:
+        received.append(event)  # type: ignore[arg-type]
+        return SinkResult()
+
+    bus = EventBus()
+    bus.register(7, sink)  # type: ignore[arg-type]
+    event = UserMessage.create(
+        event_id="message-1",
+        app_id=7,
+        user_id=1,
+        code_gen_type="html",
+        text="hello",
+    )
+    result = bus.publish(event, to=7)
+    assert result.status == "accepted"
+    assert received == [event]
+
+async def test_stream_deltas_are_coalesced_without_losing_text() -> None:
+    async def source():
+        yield TurnEvent(id=1, event="text_delta", data={"text": "a", "batchId": "b"})
+        yield TurnEvent(id=2, event="text_delta", data={"text": "b", "batchId": "b"})
+        yield TurnEvent(id=3, event="tool_started", data={"name": "write_file"})
+        yield TurnEvent(id=4, event="text_delta", data={"text": "c", "batchId": "b"})
+
+    events = [event async for event in coalesce_stream_events(source())]
+    assert [event.event for event in events] == ["text_delta", "tool_started", "text_delta"]
+    assert events[0].data["text"] == "ab"
+    assert events[0].id == 2
+    assert events[2].data["text"] == "c"

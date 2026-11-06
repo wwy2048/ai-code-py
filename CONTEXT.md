@@ -28,6 +28,18 @@ _Avoid_: GenerationManager、AgentTurnExecutor
 生成上下文中的执行能力集合：应用层编排模型/工具循环，并通过端口与适配器协作完成持久化、压缩和流式输出。它是产品内核，不是框架依赖。
 _Avoid_: LLM 服务、agent 框架
 
+**生成代理（Generation Agent）**:
+单个 App 的入站事件消费者，注册到事件总线并按 app_id 路由；持有 followup、steering、paused 收件箱、活动回合与常驻 worker。
+_Avoid_: 全局 Agent、AppSession、worker
+
+**队列投影（Queue Projection）**:
+把收件箱状态与消息消费事实投影成前端可重放的队列快照和事件流；它不是队列事实本身。
+_Avoid_: 排队队列、收件箱、前端数组
+
+**流事件（Stream Event）**:
+模型文本或思考等高频增量事件；只能由邮箱型消费者接收，由消费者自行合并刷帧。
+_Avoid_: 普通生命周期事件、逐 token 回调
+
 **回合（Turn）**:
 一次用户请求及其引发的全部 assistant / tool 循环，直到产生最终回复或失败。一个回合内的消息共享同一个 `turn_id`，并以客户端提供的 `requestId` 去重。
 _Avoid_: 请求、调用、轮次
@@ -48,13 +60,24 @@ _Avoid_: 事件日志、状态表
 回合被打断后为满足消息配对而写入的隐藏 assistant 或 tool 记录。
 _Avoid_: 半截消息、伪回答
 
-**入站命令（Inbound Command）**:
-提交给某个生成会话、用于启动或控制回合的意图，包括开始回合、插话、打断/转向。
-_Avoid_: 请求、消息、入站事件
+**入站事件（Inbound Event）**:
+通过事件总线同步投递给生成会话 Agent 的用户意图，包括用户消息、插话和打断/转向；
+投递只进入收件箱或控制旁路，不在发布调用中执行回合。
+_Avoid_: 请求、直接方法调用、队列操作
 
 **收件箱（Inbox）**:
-生成会话接收入站命令的排队边界；投递只入队，不在发布调用中执行回合。
+生成会话接收用户消息事件的排队边界；同一条消息事件在 followup、steering、paused 状态间移动，
+消费时直接使用原事件，不复制成第二套消息对象。
 _Avoid_: 队列、缓冲区、Task
+
+**队列操作（Queue Operation）**:
+对尚未消费的收件箱消息执行 promote、delete、resume、clear 的同步状态转换；
+它直接作用于收件箱并返回结果，不通过异步事件总线，也不进入 worker 收件箱。
+_Avoid_: 队列事件、异步命令、入站消息
+
+**邮箱型消费者（Mailbox Consumer）**:
+通过非阻塞 `offer` 接收高频流事件、并自行决定合并与刷新节奏的消费者。
+_Avoid_: 普通事件回调、逐 token 渲染器、同步监听器
 
 **会话工作器（Session Worker）**:
 消费生成会话收件箱并执行回合的常驻执行者；同一会话任一时刻最多处理一个回合。

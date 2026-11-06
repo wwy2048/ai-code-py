@@ -4,7 +4,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any, Protocol
 
-from app.generation.domain.commands import StartTurnCommand
+from app.generation.domain.turns import TurnRequest
 
 EventEmitter = Callable[[str, dict[str, Any]], Awaitable[None]]
 
@@ -36,7 +36,7 @@ class TurnController(Protocol):
 class TurnExecutor(Protocol):
     async def execute(
         self,
-        command: StartTurnCommand,
+        command: TurnRequest,
         *,
         emit: EventEmitter,
         control: TurnController,
