@@ -3,7 +3,12 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any, Protocol
 
-from app.generation.adapters.vue_project import VueProjectBuilder, VueProjectTemplate
+from app.generation.adapters.vue_project import (
+    BuildResult,
+    VueProjectBuilder,
+    VueProjectTemplate,
+    VueSourceSnapshot,
+)
 from app.generation.adapters.workspace import Workspace
 from app.generation.ports.tools import ToolExtension
 
@@ -17,6 +22,12 @@ class CompletionResult:
     size_bytes: int | None = None
 
 
+class WorkspaceSnapshot(Protocol):
+    def restore(self) -> None: ...
+
+    def commit(self) -> None: ...
+
+
 class CompletionPolicy(Protocol):
     """代码生成完成后的校验与修复策略。"""
 
@@ -28,18 +39,41 @@ class CompletionPolicy(Protocol):
     def repair_message(self, result: CompletionResult) -> str: ...
 
 
+class VueBuildCoordinator:
+    """在同一 Turn 内复用相同源码指纹的构建结果，避免模型与完成策略重复构建。"""
+
+    def __init__(self, builder: VueProjectBuilder) -> None:
+        self._builder = builder
+        self._last_digest: str | None = None
+        self._last_result: BuildResult | None = None
+
+    async def build(self, workspace: Workspace) -> BuildResult:
+        digest = await asyncio.to_thread(self._builder.source_digest, workspace.root)
+        if digest == self._last_digest and self._last_result is not None:
+            return self._last_result
+        result = await asyncio.to_thread(self._builder.build, workspace.root)
+        self._last_digest = digest
+        self._last_result = result
+        return result
+
+
 class VueCompletionPolicy:
     max_passes = 3
     tool_name = "build_project"
 
-    def __init__(self, builder: VueProjectBuilder, *, max_passes: int = 3) -> None:
+    def __init__(
+        self,
+        coordinator: VueBuildCoordinator,
+        *,
+        max_passes: int = 3,
+    ) -> None:
         if max_passes < 1:
             raise ValueError("max_passes 必须大于 0")
-        self._builder = builder
+        self._coordinator = coordinator
         self.max_passes = max_passes
 
     async def validate(self, workspace: Workspace) -> CompletionResult:
-        result = await asyncio.to_thread(self._builder.build, workspace.root)
+        result = await self._coordinator.build(workspace)
         return CompletionResult(
             ok=result.ok,
             output=result.output,
@@ -48,9 +82,17 @@ class VueCompletionPolicy:
 
     def repair_message(self, result: CompletionResult) -> str:
         return (
-            "构建失败，请修复 src/App.vue 或 src/style.css 后再次"
-            f"调用 build_project。错误日志：{result.output[:3000]}"
+            "构建失败（或浏览器校验失败），请先读取当前文件，再修复 Vue 页面、组件、路由或样式，"
+            "完成后再次调用 build_project。错误日志（尾部）："
+            f"{_tail(result.output, 3000)}"
         )
+
+
+def _tail(text: str, limit: int) -> str:
+    if len(text) <= limit:
+        return text
+    omitted = len(text) - limit
+    return f"(已省略前部 {omitted} 字符)\n{text[-limit:]}"
 
 
 @dataclass(frozen=True)
@@ -62,9 +104,15 @@ class CodegenProfile:
     prepare_workspace: Callable[[Workspace], None]
     build_tool_extension: Callable[[Workspace, str, EventEmitter], ToolExtension]
     completion_policy: CompletionPolicy | None = None
+    snapshot_workspace: Callable[[Workspace], WorkspaceSnapshot | None] | None = None
 
     def prepare(self, workspace: Workspace) -> None:
         self.prepare_workspace(workspace)
+
+    def snapshot(self, workspace: Workspace) -> WorkspaceSnapshot | None:
+        if self.snapshot_workspace is None:
+            return None
+        return self.snapshot_workspace(workspace)
 
     def tools(
         self,
@@ -107,6 +155,7 @@ def build_codegen_profile(
         )
     if code_gen_type == "vue_project":
         template = VueProjectTemplate()
+        coordinator = VueBuildCoordinator(vue_builder)
 
         def build_vue_tools(
             workspace: Workspace,
@@ -114,7 +163,7 @@ def build_codegen_profile(
             emit: EventEmitter,
         ) -> ToolExtension:
             async def build_project(arguments: dict[str, Any]) -> tuple[str, int | None]:
-                result = await asyncio.to_thread(vue_builder.build, workspace.root)
+                result = await coordinator.build(workspace)
                 if not result.ok:
                     raise ValueError(result.output)
                 return result.output, result.dist_size_bytes
@@ -123,7 +172,7 @@ def build_codegen_profile(
                 definitions=(
                     {
                         "name": "build_project",
-                        "description": "执行受控 Vue 构建并返回错误日志。",
+                        "description": "执行受控 Vue 构建与浏览器校验，并返回错误日志。",
                         "input_schema": {"type": "object", "properties": {}},
                     },
                 ),
@@ -132,12 +181,27 @@ def build_codegen_profile(
 
         return CodegenProfile(
             code_gen_type=code_gen_type,
-            allowed_write_paths=frozenset({"src/App.vue", "src/style.css"}),
+            allowed_write_paths=frozenset(
+                {
+                    "src/App.vue",
+                    "src/style.css",
+                    "src/router/routes.js",
+                    "src/components/**",
+                    "src/views/**",
+                    "src/composables/**",
+                    "src/data/**",
+                    "src/utils/**",
+                    "src/types/**",
+                    "src/assets/**",
+                    "public/**",
+                }
+            ),
             prepare_workspace=lambda workspace: template.prepare(workspace.root),
             build_tool_extension=build_vue_tools,
             completion_policy=VueCompletionPolicy(
-                vue_builder,
+                coordinator,
                 max_passes=max_validation_repairs,
             ),
+            snapshot_workspace=lambda workspace: VueSourceSnapshot(workspace.root),
         )
     raise ValueError(f"暂不支持的 codeGenType: {code_gen_type}")

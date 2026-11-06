@@ -211,3 +211,28 @@ async def test_subagent_stops_at_max_rounds(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="最大执行轮数"):
         await runner.run(task="循环", workdir="loop", emit=emit, turn_id="loop-turn")
     assert events == ["subagent_started", "subagent_failed"]
+
+
+async def test_subagent_inherits_scoped_write_policy(tmp_path: Path) -> None:
+    workspace = Workspace(tmp_path)
+    runner = SubagentRunner(
+        workspace,
+        lambda _: WritingSubagentModel(),
+        code_gen_type="vue_project",
+        max_rounds=3,
+        timeout_seconds=1,
+        allowed_write_paths=frozenset({"src/components/**"}),
+    )
+
+    async def emit(event: str, data: dict[str, Any]) -> None:
+        return None
+
+    summary = await runner.run(
+        task="编写组件",
+        workdir="src/components",
+        emit=emit,
+        turn_id="scoped-subagent",
+    )
+
+    assert summary == "子代理摘要：已完成局部页面"
+    assert (tmp_path / "src" / "components" / "part.html").is_file()

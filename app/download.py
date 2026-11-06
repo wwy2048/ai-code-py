@@ -17,6 +17,7 @@ _IGNORED_NAMES = {
     ".mvn",
     ".idea",
     ".vscode",
+    ".ai-code-npm-install.json",
 }
 _IGNORED_EXTENSIONS = (".log", ".tmp", ".cache")
 _MAX_FILES = 5000
@@ -109,7 +110,11 @@ def build_workspace_zip(app: App, workspace_root: Path) -> bytes:
 
 def _ignored(path: Path) -> bool:
     name = path.name
-    return name in _IGNORED_NAMES or name.endswith(_IGNORED_EXTENSIONS)
+    return (
+        name in _IGNORED_NAMES
+        or name.startswith(".ai-code-dist-")
+        or name.endswith(_IGNORED_EXTENSIONS)
+    )
 
 
 def _is_link(path: Path) -> bool:

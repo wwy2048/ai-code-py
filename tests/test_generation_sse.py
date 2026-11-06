@@ -973,6 +973,211 @@ async def test_vue_build_failure_is_fed_back_for_repair(app_context: AppContext)
         if e["event"] == "tool_finished" and e["data"].get("name") == "build_project"
     ]
     assert [e["data"]["status"] for e in builds] == ["failed", "completed"]
+    assert builder.calls == 2
     workspace = Path(app_context.app.state.settings.workspace_root) / f"vue_project_{app_id}"
     assert (workspace / "dist/index.html").is_file()
     assert "Fixed Vue" in (workspace / "src/App.vue").read_text(encoding="utf-8")
+    async with app_context.session_factory() as session:
+        visible_users = (
+            await session.scalars(
+                select(ChatHistory).where(
+                    ChatHistory.app_id == app_id,
+                    ChatHistory.message_type == "user",
+                    ChatHistory.visible.is_(True),
+                )
+            )
+        ).all()
+    assert all("构建失败" not in row.message for row in visible_users)
+
+
+
+class AlwaysFailingVueBuilder(VueProjectBuilder):
+    def build(self, root: Path) -> BuildResult:
+        return BuildResult(False, "build failed for rollback test")
+
+
+async def test_failed_vue_turn_restores_previous_source(app_context: AppContext) -> None:
+    app_context.app.state.code_gen_type_router = StaticCodeGenTypeRouter(CodeGenType.VUE_PROJECT)
+    app_context.app.state.generation_runtime = GenerationRuntime(
+        AgentTurnExecutor(
+            app_context.session_factory,
+            Path(app_context.app.state.settings.workspace_root),
+            lambda _: ScriptedVueModel(),
+            vue_builder=AlwaysFailingVueBuilder(),
+        )
+    )
+    await app_context.client.post(
+        "/api/user/register",
+        json={
+            "userAccount": "rollback-vue",
+            "userPassword": "password123",
+            "checkPassword": "password123",
+        },
+    )
+    await app_context.client.post(
+        "/api/user/login", json={"userAccount": "rollback-vue", "userPassword": "password123"}
+    )
+    app_id = (await app_context.client.post("/api/app/create", json={"initPrompt": "Vue"})).json()[
+        "data"
+    ]
+    await app_context.client.post(
+        "/api/app/chat/gen/code",
+        json={"appId": app_id, "message": "生成 Vue", "requestId": "vue-rollback"},
+    )
+
+    workspace = Path(app_context.app.state.settings.workspace_root) / f"vue_project_{app_id}"
+    app_source = (workspace / "src/App.vue").read_text(encoding="utf-8")
+    assert "<router-view />" in app_source
+    assert "Fixed Vue" not in app_source
+
+
+class EndlessHtmlToolModel:
+    def __init__(self) -> None:
+        self.requests: list[ModelRequest] = []
+
+    async def next_turn(self, request: ModelRequest, on_text: TextEmitter) -> ModelReply:
+        self.requests.append(request)
+        if request.tools:
+            return ModelReply(
+                text="继续完善页面。",
+                tool_calls=[
+                    ToolCall(
+                        id=f"endless-write-{len(self.requests)}",
+                        name="write_file",
+                        arguments={"path": "index.html", "content": "<h1>工具循环收口</h1>"},
+                    )
+                ],
+            )
+        text = "已达到工具预算，页面最终状态已保留。"
+        await on_text(text)
+        return ModelReply(text=text)
+
+
+async def test_exhausted_html_turn_forces_final_text(app_context: AppContext) -> None:
+    model = EndlessHtmlToolModel()
+    app_context.app.state.generation_runtime = GenerationRuntime(
+        AgentTurnExecutor(
+            app_context.session_factory,
+            Path(app_context.app.state.settings.workspace_root),
+            lambda _: model,
+            max_rounds_per_phase=2,
+        )
+    )
+    await app_context.client.post(
+        "/api/user/register",
+        json={
+            "userAccount": "finalize-user",
+            "userPassword": "password123",
+            "checkPassword": "password123",
+        },
+    )
+    await app_context.client.post(
+        "/api/user/login", json={"userAccount": "finalize-user", "userPassword": "password123"}
+    )
+    app_id = (await app_context.client.post("/api/app/create", json={"initPrompt": "HTML"})).json()[
+        "data"
+    ]
+
+    response = await app_context.client.post(
+        "/api/app/chat/gen/code",
+        json={"appId": app_id, "message": "生成页面", "requestId": "finalize-turn"},
+    )
+    events = _parse_sse(response.text)
+    text_deltas = [event["data"]["text"] for event in events if event["event"] == "text_delta"]
+
+    assert model.requests[-1].tools == ()
+    assert text_deltas[-1] == "已达到工具预算，页面最终状态已保留。"
+    assert events[-2]["event"] == "text_delta"
+    assert events[-1]["event"] == "turn_finished"
+    assert events[-1]["data"]["status"] == "completed"
+
+    async with app_context.session_factory() as session:
+        last_assistant = await session.scalar(
+            select(ChatHistory)
+            .where(
+                ChatHistory.app_id == app_id,
+                ChatHistory.message_kind == "assistant",
+                ChatHistory.visible.is_(True),
+            )
+            .order_by(ChatHistory.sequence.desc())
+            .limit(1)
+        )
+    assert last_assistant is not None
+    assert last_assistant.message == "已达到工具预算，页面最终状态已保留。"
+
+
+class EndlessVueToolModel:
+    def __init__(self) -> None:
+        self.requests: list[ModelRequest] = []
+
+    async def next_turn(self, request: ModelRequest, on_text: TextEmitter) -> ModelReply:
+        self.requests.append(request)
+        if request.tools:
+            return ModelReply(
+                text="继续调整 Vue 页面。",
+                tool_calls=[
+                    ToolCall(
+                        id=f"vue-write-{len(self.requests)}",
+                        name="write_file",
+                        arguments={
+                            "path": "src/App.vue",
+                            "content": "<template><router-view /></template>",
+                        },
+                    )
+                ],
+            )
+        text = "Vue 工具预算已耗尽，当前通过校验的页面已保留。"
+        await on_text(text)
+        return ModelReply(text=text)
+
+
+class AlwaysSuccessfulVueBuilder(VueProjectBuilder):
+    def build(self, root: Path) -> BuildResult:
+        dist = root / "dist"
+        dist.mkdir(exist_ok=True)
+        (dist / "index.html").write_text("built", encoding="utf-8")
+        return BuildResult(True, "build ok", 5)
+
+
+async def test_exhausted_vue_turn_forces_final_text_after_validation(
+    app_context: AppContext,
+) -> None:
+    model = EndlessVueToolModel()
+    app_context.app.state.code_gen_type_router = StaticCodeGenTypeRouter(CodeGenType.VUE_PROJECT)
+    app_context.app.state.generation_runtime = GenerationRuntime(
+        AgentTurnExecutor(
+            app_context.session_factory,
+            Path(app_context.app.state.settings.workspace_root),
+            lambda _: model,
+            vue_builder=AlwaysSuccessfulVueBuilder(),
+            max_rounds_per_phase=2,
+        )
+    )
+    await app_context.client.post(
+        "/api/user/register",
+        json={
+            "userAccount": "finalize-vue-user",
+            "userPassword": "password123",
+            "checkPassword": "password123",
+        },
+    )
+    await app_context.client.post(
+        "/api/user/login",
+        json={"userAccount": "finalize-vue-user", "userPassword": "password123"},
+    )
+    app_id = (await app_context.client.post("/api/app/create", json={"initPrompt": "Vue"})).json()[
+        "data"
+    ]
+
+    response = await app_context.client.post(
+        "/api/app/chat/gen/code",
+        json={"appId": app_id, "message": "生成 Vue", "requestId": "finalize-vue-turn"},
+    )
+    events = _parse_sse(response.text)
+    text_deltas = [event["data"]["text"] for event in events if event["event"] == "text_delta"]
+
+    assert model.requests[-1].tools == ()
+    assert text_deltas[-1] == "Vue 工具预算已耗尽，当前通过校验的页面已保留。"
+    assert events[-2]["event"] == "text_delta"
+    assert events[-1]["event"] == "turn_finished"
+    assert events[-1]["data"]["status"] == "completed"

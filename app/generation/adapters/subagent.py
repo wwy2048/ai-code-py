@@ -1,4 +1,5 @@
 import asyncio
+import posixpath
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any
@@ -28,10 +29,12 @@ class SubagentRunner:
         code_gen_type: str,
         max_rounds: int,
         timeout_seconds: float,
+        allowed_write_paths: frozenset[str] | None = None,
     ) -> None:
         self._workspace = workspace
         self._model_factory = model_factory
         self._code_gen_type = code_gen_type
+        self._allowed_write_paths = allowed_write_paths
         if max_rounds < 1 or timeout_seconds <= 0:
             raise ValueError("子代理轮数和超时配置必须大于 0")
         self._max_rounds = max_rounds
@@ -51,10 +54,17 @@ class SubagentRunner:
         if self._lock.locked():
             raise ValueError("当前 App 已有子代理运行")
         scope = self._scope(workdir)
+        scoped_write_paths = self._scoped_write_paths(workdir)
         async with self._lock:
             try:
                 async with asyncio.timeout(self._timeout_seconds):
-                    return await self._run(task, scope, emit, turn_id)
+                    return await self._run(
+                        task,
+                        scope,
+                        emit,
+                        turn_id,
+                        allowed_write_paths=scoped_write_paths,
+                    )
             except TimeoutError as exc:
                 await emit("subagent_failed", {"turnId": turn_id, "reason": "timeout"})
                 raise ValueError("子代理执行超时") from exc
@@ -70,6 +80,8 @@ class SubagentRunner:
         scope: Path,
         emit: SubagentEmitter,
         turn_id: str,
+        *,
+        allowed_write_paths: frozenset[str] | None,
     ) -> str:
         await emit("subagent_started", {"turnId": turn_id, "workdir": scope.name})
         model = self._model_factory(self._code_gen_type)
@@ -79,7 +91,12 @@ class SubagentRunner:
 
         loop = AgentLoop(
             model=model,
-            tools=ToolRegistry(Workspace(scope)),
+            tools=ToolRegistry(
+                Workspace(scope),
+                allowed_write_paths=(
+                    set(allowed_write_paths) if allowed_write_paths is not None else None
+                ),
+            ),
             journal=NullTurnJournal(),
             emit=ignore_event,
             hooks=HookBus(),
@@ -105,6 +122,23 @@ class SubagentRunner:
             {"turnId": turn_id, "summary": summary[:_EVENT_PREVIEW_CHARS]},
         )
         return summary
+
+    def _scoped_write_paths(self, workdir: str) -> frozenset[str] | None:
+        if self._allowed_write_paths is None:
+            return None
+        scope = posixpath.normpath(workdir.replace("\\", "/")).strip("/")
+        scoped: set[str] = set()
+        for pattern in self._allowed_write_paths:
+            if pattern.startswith(scope + "/"):
+                scoped.add(pattern[len(scope) + 1 :])
+                continue
+            if pattern.endswith("/**"):
+                prefix = pattern[:-3]
+                if scope == prefix or scope.startswith(prefix + "/"):
+                    scoped.add("**")
+        if not scoped:
+            raise ValueError("子代理目录不在允许写入范围")
+        return frozenset(scoped)
 
     def _scope(self, workdir: str) -> Path:
         if not workdir or Path(workdir).is_absolute() or ".." in Path(workdir).parts:

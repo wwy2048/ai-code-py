@@ -47,6 +47,10 @@ class Settings(BaseSettings):
     agent_max_rounds_per_phase: int = 12
     agent_max_validation_repairs: int = 3
     generation_event_buffer_limit: int = 4096
+    vue_browser_validation_enabled: bool = True
+    vue_browser_validation_timeout_seconds: float = 30.0
+    vue_browser_validation_wait_seconds: float = 1.0
+    vue_browser_validation_min_css_bytes: int = 200
 
     workspace_root: str = str(_PROJECT_ROOT / "tmp/codeOutput")
     deploy_root: str = str(_PROJECT_ROOT / "tmp/code_deploy")

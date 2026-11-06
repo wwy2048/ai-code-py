@@ -113,3 +113,37 @@ async def test_tool_extension_adds_schema_and_handler_without_global_registratio
     assert result.ok is True
     assert result.output == "echo:hello"
     assert [definition["name"] for definition in registry.definitions][-1] == "echo"
+
+
+async def test_tool_registry_supports_controlled_vue_subtrees(tmp_path: Path) -> None:
+    registry = ToolRegistry(
+        Workspace(tmp_path),
+        allowed_write_paths={
+            "src/App.vue",
+            "src/components/**",
+            "src/router/routes.js",
+        },
+    )
+
+    allowed = await registry.execute(
+        ToolCall(
+            id="component-call",
+            name="write_file",
+            arguments={
+                "path": "src\\components\\HeroPanel.vue",
+                "content": "<template><section /></template>",
+            },
+        )
+    )
+    forbidden = await registry.execute(
+        ToolCall(
+            id="main-call",
+            name="write_file",
+            arguments={"path": "src/main.js", "content": "bad"},
+        )
+    )
+
+    assert allowed.ok is True
+    assert (tmp_path / "src" / "components" / "HeroPanel.vue").is_file()
+    assert forbidden.ok is False
+    assert "不允许写入" in forbidden.output

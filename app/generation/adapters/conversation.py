@@ -13,6 +13,9 @@ class ConversationJournal:
     async def append_user(self, message: str) -> None:
         await self._store.append_user(message)
 
+    async def append_internal_user(self, message: str) -> None:
+        await self._store.append_internal_user(message)
+
     async def append_assistant(self, message: AssistantMessage, *, batch_id: str | None) -> None:
         await self._store.append_assistant(message.content, batch_id=batch_id)
 

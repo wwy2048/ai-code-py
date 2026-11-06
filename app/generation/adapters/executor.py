@@ -1,3 +1,5 @@
+import asyncio
+import logging
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -28,6 +30,8 @@ from app.generation.domain.turns import TurnRequest
 from app.generation.ports.model import AgentModel, ContextSummarizer
 from app.generation.ports.tools import ToolExtension
 from app.generation.ports.turn import EventEmitter, TurnController, TurnExecutionResult
+
+logger = logging.getLogger(__name__)
 
 
 class AgentTurnExecutor:
@@ -125,6 +129,7 @@ class AgentTurnExecutor:
                 max_validation_repairs=self._max_validation_repairs,
             )
             profile.prepare(workspace)
+            snapshot = profile.snapshot(workspace)
             extension = self._combine_extensions(
                 profile.tools(workspace, turn_id=turn_id, emit=emit),
                 self._subagent_extension(
@@ -132,6 +137,7 @@ class AgentTurnExecutor:
                     code_gen_type=code_gen_type,
                     emit=emit,
                     turn_id=turn_id,
+                    allowed_write_paths=profile.allowed_write_paths,
                 ),
             )
             registry = ToolRegistry.with_extension(
@@ -150,6 +156,7 @@ class AgentTurnExecutor:
             journal = ConversationJournal(conversation)
             hook_bus = HookBus(self._hooks)
             hooks_started = False
+            turn_succeeded = False
             try:
                 await hook_bus.turn_started(
                     TurnStartedContext(
@@ -209,6 +216,7 @@ class AgentTurnExecutor:
                         assistant_text=assistant_text,
                     )
                 )
+                turn_succeeded = True
                 return TurnExecutionResult(status="completed", assistant_text=assistant_text)
             except Exception as exc:
                 try:
@@ -219,6 +227,15 @@ class AgentTurnExecutor:
                 if hooks_started:
                     await hook_bus.turn_failed(TurnFailedContext(turn_id=turn_id, error=exc))
                 raise
+            finally:
+                if snapshot is not None:
+                    try:
+                        if turn_succeeded:
+                            await asyncio.to_thread(snapshot.commit)
+                        else:
+                            await asyncio.to_thread(snapshot.restore)
+                    except Exception:
+                        logger.exception("Vue 源码快照收口失败 turn_id=%s", turn_id)
 
     async def _maybe_compact(
         self,
@@ -255,6 +272,13 @@ class AgentTurnExecutor:
             if result.interrupted:
                 return "interrupted"
             if policy is None:
+                if result.exhausted:
+                    finalized = await loop.finalize(
+                        state,
+                        reason="本轮工具调用预算已耗尽",
+                    )
+                    if finalized.interrupted:
+                        return "interrupted"
                 return "completed"
 
             validation = await policy.validate(workspace)
@@ -282,12 +306,19 @@ class AgentTurnExecutor:
                 },
             )
             if validation.ok:
+                if result.exhausted:
+                    finalized = await loop.finalize(
+                        state,
+                        reason="本轮工具调用预算已耗尽",
+                    )
+                    if finalized.interrupted:
+                        return "interrupted"
                 return "completed"
             if attempt == max_passes - 1:
                 raise RuntimeError(f"Vue 构建失败: {validation.output[:1000]}")
             repair_message = policy.repair_message(validation)
             state.messages.append(UserMessage(content=repair_message))
-            await journal.append_user(repair_message)
+            await journal.append_internal_user(repair_message)
             await journal.commit()
         return "completed"
 
@@ -298,6 +329,7 @@ class AgentTurnExecutor:
         code_gen_type: str,
         emit: EventEmitter,
         turn_id: str,
+        allowed_write_paths: frozenset[str],
     ) -> ToolExtension:
         if not self._subagent_enabled:
             return ToolExtension()
@@ -307,6 +339,7 @@ class AgentTurnExecutor:
             code_gen_type=code_gen_type,
             max_rounds=self._subagent_max_rounds,
             timeout_seconds=self._subagent_timeout_seconds,
+            allowed_write_paths=allowed_write_paths,
         )
 
         async def delegate_subagent(arguments: dict[str, Any]) -> tuple[str, None]:

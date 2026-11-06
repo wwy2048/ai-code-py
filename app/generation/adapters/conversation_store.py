@@ -68,6 +68,15 @@ class ConversationStore:
             visible=True,
         )
 
+    async def append_internal_user(self, message: str) -> None:
+        """保存仅用于模型修复的内部提示，不进入前端可见历史。"""
+        await self._append(
+            message=message,
+            message_type=MessageType.USER,
+            message_kind=MessageKind.USER,
+            visible=False,
+        )
+
     async def load_active_model_messages(self) -> list[AgentMessage]:
         """加载当前 App 仍生效的运行时消息，并投影为类型化模型消息。"""
         records = await self.load_active_records()

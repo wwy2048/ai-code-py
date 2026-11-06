@@ -1,4 +1,5 @@
 import inspect
+import posixpath
 from collections.abc import Mapping, Sequence
 from time import perf_counter
 from typing import Any
@@ -129,8 +130,19 @@ class ToolRegistry:
         return content, len(content.encode("utf-8"))
 
     def _validate_write_path(self, path: str) -> None:
-        if self._allowed_write_paths is not None and path not in self._allowed_write_paths:
+        if self._allowed_write_paths is None:
+            return
+        normalized = posixpath.normpath(path.replace("\\", "/"))
+        if normalized == ".." or normalized.startswith("../"):
             raise ValueError(f"当前 codeGenType 不允许写入文件: {path}")
+        for pattern in self._allowed_write_paths:
+            if pattern == "**" or pattern == normalized:
+                return
+            if pattern.endswith("/**"):
+                prefix = pattern[:-3].rstrip("/") + "/"
+                if normalized.startswith(prefix):
+                    return
+        raise ValueError(f"当前 codeGenType 不允许写入文件: {path}")
 
     def _write_file(self, arguments: dict[str, Any]) -> ToolHandlerResult:
         path = str(arguments["path"])

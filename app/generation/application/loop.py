@@ -27,6 +27,10 @@ from app.generation.ports.turn import EventEmitter
 
 INTERRUPTION_PLACEHOLDER = "[本轮已被用户中断，不再基于不完整的内容作答]"
 SKIPPED_TOOL_OUTPUT = "工具调用因用户中断而未执行。"
+FINALIZATION_FALLBACK_TEXT = (
+    "本轮已达到工具调用上限，系统已停止继续修改。当前结果已保留，请检查预览；"
+    "如需继续调整，请发送下一条指令。"
+)
 
 
 @dataclass
@@ -257,6 +261,137 @@ class AgentLoop:
 
         self._control.close()
         return PhaseResult(exhausted=True, final_text=state.final_assistant_text)
+
+    async def finalize(self, state: TurnState, *, reason: str) -> PhaseResult:
+        """工具预算耗尽后禁用工具，再请求一次最终文字总结。"""
+        state.model_round += 1
+        round_index = state.model_round
+        batch_id = f"{state.turn_id}:finalize"
+        if await self._apply_pending_control(state, batch_id=batch_id, round_index=round_index):
+            return PhaseResult(exhausted=False, interrupted=True)
+        await self._drain_steering(state, batch_id=batch_id, round_index=round_index)
+
+        state.messages.append(
+            UserMessage(
+                content=(
+                    f"[系统收口指令] {reason}。不要再调用工具，也不要继续修改文件。"
+                    "请基于当前已经完成的结果，用简洁中文总结：已完成内容、验证结果、"
+                    "仍需注意的问题。"
+                )
+            )
+        )
+        streamed_parts: list[str] = []
+
+        async def on_text(delta: str) -> None:
+            streamed_parts.append(delta)
+            await self._emit("text_delta", {"text": delta, "batchId": batch_id})
+
+        request = ModelRequest(
+            messages=tuple(state.messages),
+            tools=(),
+            model_name=self._model_name,
+        )
+        await self._hooks.before_model(
+            BeforeModelContext(
+                turn_id=state.turn_id,
+                round_index=round_index,
+                request=request,
+            )
+        )
+        started = perf_counter()
+        task = asyncio.create_task(self._model.next_turn(request, on_text))
+        self._control.bind_step(task, step_id=f"{state.turn_id}:finalize")
+        reply = None
+        try:
+            reply = await task
+        except asyncio.CancelledError:
+            duration_ms = int((perf_counter() - started) * 1000)
+            if not self._control.has_interrupt():
+                if not task.done():
+                    task.cancel()
+                raise
+            await self._journal.append_model_call(
+                status=ModelCallStatus.CANCELLED,
+                model_name=self._model_name,
+                duration_ms=duration_ms,
+                error_type="Interrupted",
+                error_summary="用户中断最终收口",
+            )
+            await self._journal.commit()
+            if await self._apply_pending_control(
+                state, batch_id=batch_id, round_index=round_index
+            ):
+                return PhaseResult(exhausted=False, interrupted=True)
+            raise
+        except Exception as exc:
+            duration_ms = int((perf_counter() - started) * 1000)
+            await self._hooks.model_failed(
+                ModelFailedContext(
+                    turn_id=state.turn_id,
+                    round_index=round_index,
+                    request=request,
+                    error=exc,
+                    duration_ms=duration_ms,
+                )
+            )
+            await self._journal.append_model_call(
+                status=ModelCallStatus.ERROR,
+                model_name=self._model_name,
+                duration_ms=duration_ms,
+                error_type=type(exc).__name__,
+                error_summary=str(getattr(exc, "summary", type(exc).__name__))[:256],
+                retry_count=int(getattr(exc, "retry_count", 0)),
+            )
+            await self._journal.commit()
+        finally:
+            self._control.clear_step(task)
+
+        if reply is not None:
+            duration_ms = int((perf_counter() - started) * 1000)
+            await self._hooks.after_model(
+                AfterModelContext(
+                    turn_id=state.turn_id,
+                    round_index=round_index,
+                    request=request,
+                    reply=reply,
+                    duration_ms=duration_ms,
+                )
+            )
+            await self._journal.append_model_call(
+                status=ModelCallStatus.SUCCESS,
+                model_name=reply.model_name or self._model_name,
+                duration_ms=duration_ms,
+                input_tokens=reply.input_tokens,
+                output_tokens=reply.output_tokens,
+                retry_count=reply.retry_count,
+            )
+            await self._journal.commit()
+
+        reply_text = reply.text if reply is not None else ""
+        round_text = "".join(streamed_parts) if streamed_parts else reply_text
+        final_text = round_text.strip()
+        if not final_text:
+            final_text = FINALIZATION_FALLBACK_TEXT
+            await self._emit(
+                "text_delta",
+                {"text": final_text, "batchId": batch_id},
+            )
+        elif reply is not None and reply.text and not streamed_parts:
+            await self._emit(
+                "text_delta",
+                {"text": reply.text, "batchId": batch_id},
+            )
+
+        state.last_round_text = final_text
+        state.final_assistant_text = final_text
+        state.persisted_assistant_text = True
+        await self._journal.append_assistant(
+            AssistantMessage(content=final_text),
+            batch_id=batch_id,
+        )
+        await self._journal.commit()
+        self._control.close()
+        return PhaseResult(exhausted=False, final_text=final_text)
 
     async def _drain_steering(
         self,

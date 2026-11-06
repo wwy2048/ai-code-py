@@ -30,6 +30,8 @@ from app.errors import (
 from app.generation.adapters.compaction import ContextCompactor
 from app.generation.adapters.executor import AgentTurnExecutor
 from app.generation.adapters.factory import create_agent_model_factory
+from app.generation.adapters.vue_browser import SeleniumVueBrowserValidator
+from app.generation.adapters.vue_project import VueProjectBuilder
 from app.generation.application.runtime import GenerationRuntime
 from app.generation.ports.model import AgentModel
 from app.services.deployments import generate_deploy_key
@@ -77,10 +79,20 @@ def create_app(
         screenshots_root=Path(app_settings.screenshots_root),
         shutdown_timeout_seconds=app_settings.cover_shutdown_timeout_seconds,
     )
+    vue_browser_validator = (
+        SeleniumVueBrowserValidator(
+            timeout_seconds=app_settings.vue_browser_validation_timeout_seconds,
+            wait_after_load_seconds=app_settings.vue_browser_validation_wait_seconds,
+            min_css_bytes=app_settings.vue_browser_validation_min_css_bytes,
+        )
+        if app_settings.vue_browser_validation_enabled
+        else None
+    )
     turn_executor = AgentTurnExecutor(
         app.state.session_factory,
         Path(app_settings.workspace_root),
         agent_model_factory or create_agent_model_factory(app_settings),
+        vue_builder=VueProjectBuilder(browser_validator=vue_browser_validator),
         context_compactor=ContextCompactor(
             context_window_tokens=app_settings.model_context_window_tokens,
             trigger_ratio=app_settings.context_compaction_trigger_ratio,

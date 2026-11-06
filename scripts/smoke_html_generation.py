@@ -17,7 +17,9 @@ from app.config import get_settings
 from app.db import Base, create_engine
 from app.generation.adapters.executor import AgentTurnExecutor
 from app.generation.adapters.factory import create_agent_model_factory
-from app.generation.domain.commands import StartTurnCommand
+from app.generation.adapters.vue_browser import SeleniumVueBrowserValidator
+from app.generation.adapters.vue_project import VueProjectBuilder
+from app.generation.domain.turns import TurnRequest
 
 
 async def run_smoke(code_gen_type: str) -> None:
@@ -32,17 +34,27 @@ async def run_smoke(code_gen_type: str) -> None:
 
     with tempfile.TemporaryDirectory(prefix="ai-code-smoke-") as temp_dir:
         root = Path(temp_dir)
+        browser_validator = (
+            SeleniumVueBrowserValidator(
+                timeout_seconds=settings.vue_browser_validation_timeout_seconds,
+                wait_after_load_seconds=settings.vue_browser_validation_wait_seconds,
+                min_css_bytes=settings.vue_browser_validation_min_css_bytes,
+            )
+            if settings.vue_browser_validation_enabled
+            else None
+        )
         executor = AgentTurnExecutor(
             session_factory,
             root,
             create_agent_model_factory(settings),
+            vue_builder=VueProjectBuilder(browser_validator=browser_validator),
         )
 
         async def emit(event: str, payload: dict) -> None:
             print(f"[{event}] {payload}")
 
         await executor.execute(
-            StartTurnCommand(
+            TurnRequest(
                 app_id=1,
                 user_id=1,
                 code_gen_type=code_gen_type,
@@ -70,7 +82,14 @@ async def run_smoke(code_gen_type: str) -> None:
             if "style.css" not in content or "script.js" not in content:
                 raise SystemExit("index.html 未正确引用 CSS/JS")
         if code_gen_type == "vue_project":
-            for fixed in ("package.json", "vite.config.js", "src/App.vue"):
+            for fixed in (
+                "package.json",
+                "package-lock.json",
+                "vite.config.js",
+                "src/App.vue",
+                "src/router/index.js",
+                "src/router/routes.js",
+            ):
                 if not (workspace / fixed).is_file():
                     raise SystemExit(f"Vue 冒烟缺少固定模板文件 {fixed}")
         print(f"冒烟通过：{index_path} ({len(content)} 字符)")
@@ -79,7 +98,9 @@ async def run_smoke(code_gen_type: str) -> None:
 
 
 if __name__ == "__main__":
-    sys.stdout.reconfigure(encoding="utf-8")
+    reconfigure = getattr(sys.stdout, "reconfigure", None)
+    if reconfigure is not None:
+        reconfigure(encoding="utf-8")
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--type",
