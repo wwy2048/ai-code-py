@@ -280,3 +280,49 @@ async def test_anthropic_html_model_reports_retries_after_exhaustion() -> None:
         assert exc.retry_count == 1
     else:
         raise AssertionError("预期 ModelCallError")
+
+
+async def test_anthropic_usage_normalizes_cache_read_tokens() -> None:
+    final = SimpleNamespace(
+        content=[SimpleNamespace(type="text", text="完成")],
+        usage=SimpleNamespace(
+            input_tokens=100,
+            cache_read_input_tokens=300,
+            cache_creation_input_tokens=50,
+            output_tokens=20,
+        ),
+    )
+    client = FakeInferenceClient([FakeStream(["完成"], final)])
+    model = AnthropicHtmlModel(_settings(), client=client)  # type: ignore[arg-type]
+
+    async def on_text(text: str) -> None:
+        return None
+
+    reply = await model.next_turn(_request(UserMessage(content="创建")), on_text)
+
+    assert reply.input_tokens == 450
+    assert reply.cached_input_tokens == 300
+    assert reply.output_tokens == 20
+
+
+async def test_usage_normalizes_deepseek_native_cache_fields() -> None:
+    final = SimpleNamespace(
+        content=[SimpleNamespace(type="text", text="完成")],
+        usage=SimpleNamespace(
+            prompt_tokens=1000,
+            prompt_cache_hit_tokens=400,
+            prompt_cache_miss_tokens=600,
+            completion_tokens=50,
+        ),
+    )
+    client = FakeInferenceClient([FakeStream(["完成"], final)])
+    model = AnthropicHtmlModel(_settings(), client=client)  # type: ignore[arg-type]
+
+    async def on_text(text: str) -> None:
+        return None
+
+    reply = await model.next_turn(_request(UserMessage(content="创建")), on_text)
+
+    assert reply.input_tokens == 1000
+    assert reply.cached_input_tokens == 400
+    assert reply.output_tokens == 50

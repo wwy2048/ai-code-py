@@ -22,6 +22,7 @@ class ModelReply:
     text: str = ""
     tool_calls: list[ToolCall] = field(default_factory=list)
     input_tokens: int = 0
+    cached_input_tokens: int = 0
     output_tokens: int = 0
     model_name: str = ""
     retry_count: int = 0
@@ -33,6 +34,7 @@ class SummaryResult:
     text: str
     model_name: str
     input_tokens: int = 0
+    cached_input_tokens: int = 0
     output_tokens: int = 0
     retry_count: int = 0
 

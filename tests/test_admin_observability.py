@@ -1,4 +1,5 @@
 from datetime import datetime, timedelta
+from decimal import Decimal
 
 from conftest import AppContext
 
@@ -118,13 +119,16 @@ async def _seed_debug_turn(app_context: AppContext, *, user_id: int, app_id: int
                 ),
                 ModelCallLog(
                     app_id=app_id,
+                    user_id=user_id,
                     turn_id="turn-debug",
                     model_name="test-model",
                     call_kind="generation",
                     status="error",
                     duration_ms=123,
                     input_tokens=100,
+                    cached_input_tokens=30,
                     output_tokens=20,
+                    cost_cny=Decimal("0.00012345"),
                     error_type="ModelCallError",
                     error_summary="api_key=sk-live-secret Bearer abcdef",
                     retry_count=1,
@@ -215,8 +219,11 @@ async def test_admin_turn_debug_exposes_hidden_metadata_without_sensitive_bodies
     assert "完整源码不得返回" not in response.text
     assert len(tool_result["preview"]) <= 500
     assert tool_result["preview"] != "X" * 2000
+    assert data["modelCalls"][0]["userId"] == user_id
     assert data["modelCalls"][0]["status"] == "error"
     assert data["modelCalls"][0]["durationMs"] == 123
+    assert data["modelCalls"][0]["cachedInputTokens"] == 30
+    assert data["modelCalls"][0]["costCny"] == 0.00012345
     assert "sk-live-secret" not in response.text
     assert "Bearer abcdef" not in response.text
 

@@ -14,6 +14,7 @@ from app.generation.domain.messages import (
 )
 from app.generation.ports.model import ModelCallStatus
 from app.generation.ports.tools import ToolExecutionResult
+from app.model_billing import calculate_cost_cny
 from app.models import ChatHistory, ModelCallLog
 from app.redaction import sanitize_sensitive_text
 
@@ -242,6 +243,7 @@ class ConversationStore:
         call_kind: str = "generation",
         duration_ms: int,
         input_tokens: int = 0,
+        cached_input_tokens: int = 0,
         output_tokens: int = 0,
         error_type: str | None = None,
         error_summary: str | None = None,
@@ -250,13 +252,21 @@ class ConversationStore:
         self._session.add(
             ModelCallLog(
                 app_id=self._app_id,
+                user_id=self._user_id,
                 turn_id=self._turn_id,
                 model_name=model_name,
                 call_kind=call_kind,
                 status=status.value,
                 duration_ms=duration_ms,
                 input_tokens=input_tokens,
+                cached_input_tokens=cached_input_tokens,
                 output_tokens=output_tokens,
+                cost_cny=calculate_cost_cny(
+                    model_name,
+                    input_tokens=input_tokens,
+                    cached_input_tokens=cached_input_tokens,
+                    output_tokens=output_tokens,
+                ),
                 error_type=error_type,
                 error_summary=sanitize_sensitive_text(error_summary),
                 retry_count=retry_count,

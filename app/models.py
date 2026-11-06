@@ -1,4 +1,5 @@
 from datetime import datetime
+from decimal import Decimal
 from typing import Any
 
 from sqlalchemy import (
@@ -7,6 +8,7 @@ from sqlalchemy import (
     Boolean,
     DateTime,
     Integer,
+    Numeric,
     SmallInteger,
     String,
     Text,
@@ -130,6 +132,9 @@ class ModelCallLog(Base):
         BigInteger().with_variant(Integer, "sqlite"), primary_key=True, autoincrement=True
     )
     app_id: Mapped[int] = mapped_column("appId", BigInteger, nullable=False)
+    user_id: Mapped[int] = mapped_column(
+        "userId", BigInteger, nullable=False, server_default=text("0")
+    )
     turn_id: Mapped[str] = mapped_column("turn_id", String(64), nullable=False)
     model_name: Mapped[str] = mapped_column("model_name", String(128), nullable=False)
     call_kind: Mapped[str] = mapped_column(
@@ -140,8 +145,14 @@ class ModelCallLog(Base):
     input_tokens: Mapped[int] = mapped_column(
         "input_tokens", Integer, nullable=False, server_default=text("0")
     )
+    cached_input_tokens: Mapped[int] = mapped_column(
+        "cached_input_tokens", Integer, nullable=False, server_default=text("0")
+    )
     output_tokens: Mapped[int] = mapped_column(
         "output_tokens", Integer, nullable=False, server_default=text("0")
+    )
+    cost_cny: Mapped[Decimal] = mapped_column(
+        "cost_cny", Numeric(18, 8), nullable=False, server_default=text("0")
     )
     error_type: Mapped[str | None] = mapped_column("error_type", String(128))
     error_summary: Mapped[str | None] = mapped_column("error_summary", String(256))

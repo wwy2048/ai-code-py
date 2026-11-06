@@ -30,7 +30,7 @@ Python 全量重写 ai-code 的后端与 Agent Runtime。
 - 双向事件总线：用户消息与 interrupt 走同步入站投递，Turn 与队列事实走出站订阅；每个 App 一个 GenerationAgent，队列编辑保持同步收件箱操作
 - 运行中支持插话、停止和安全转向；控制接口为 `POST /api/app/chat/turn/control`，前端提供最小控制入口
 - 运行中支持 Followup 排队、Steer、单条删除、暂停队列组级 Resume 与 App 级队列 SSE；用户消息只在后端消费排队项时落库
-- 模型调用耗时、token、状态与脱敏错误摘要记录，并区分生成调用和压缩调用
+- 模型调用耗时、普通/缓存命中 token、人民币费用、用户 ID、状态与脱敏错误摘要记录，并区分生成调用和压缩调用；可按用户统计消费，计费标准集中维护在 `app/model_billing.py`
 - `chat_history` 保存 user / assistant / tool 运行时消息，并区分 visible / active
 - 根据 provider token usage 在 Turn 边界自动压缩旧上下文，保留最近完整 Turn 和隐藏摘要
 - Vue 模式支持受控多文件组件、Vue Router、Selenium 运行时校验、原子构建和失败源码回滚

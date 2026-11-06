@@ -317,12 +317,15 @@ async def get_turn_debug(
         "modelCalls": [
             {
                 "id": log.id,
+                "userId": log.user_id,
                 "callKind": log.call_kind,
                 "modelName": log.model_name,
                 "status": log.status,
                 "durationMs": log.duration_ms,
                 "inputTokens": log.input_tokens,
+                "cachedInputTokens": log.cached_input_tokens,
                 "outputTokens": log.output_tokens,
+                "costCny": float(log.cost_cny),
                 "errorType": log.error_type,
                 "errorSummary": _sanitize_error_summary(log.error_summary),
                 "retryCount": log.retry_count,

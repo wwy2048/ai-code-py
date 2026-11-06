@@ -519,7 +519,11 @@ class _SummaryTransportMessages:
         self.request = kwargs
         return SimpleNamespace(
             content=[SimpleNamespace(type="text", text="transport-summary")],
-            usage=SimpleNamespace(input_tokens=30, output_tokens=7),
+            usage=SimpleNamespace(
+                input_tokens=30,
+                cache_read_input_tokens=10,
+                output_tokens=7,
+            ),
         )
 
 
@@ -588,7 +592,8 @@ async def test_compaction_runs_through_anthropic_transport_and_persists_summary(
             )
         )
     assert summary_log is not None
-    assert summary_log.input_tokens == 30
+    assert summary_log.input_tokens == 40
+    assert summary_log.cached_input_tokens == 10
     assert summary_log.output_tokens == 7
 
 

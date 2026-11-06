@@ -102,7 +102,13 @@
         :data-source="detail?.modelCalls || []"
         :pagination="false"
         size="small"
-      />
+      >
+        <template #bodyCell="{ column, record }">
+          <template v-if="column.dataIndex === 'costCny'">
+            {{ formatCost(record.costCny) }}
+          </template>
+        </template>
+      </a-table>
     </a-modal>
   </div>
 </template>
@@ -175,14 +181,24 @@ const messageColumns = [
 ]
 
 const modelColumns = [
+  { title: '用户ID', dataIndex: 'userId', width: 100 },
   { title: '类型', dataIndex: 'callKind', width: 100 },
   { title: '模型', dataIndex: 'modelName', width: 130 },
   { title: '状态', dataIndex: 'status', width: 80 },
   { title: '耗时(ms)', dataIndex: 'durationMs', width: 90 },
   { title: '输入', dataIndex: 'inputTokens', width: 80 },
+  { title: '缓存输入', dataIndex: 'cachedInputTokens', width: 100 },
   { title: '输出', dataIndex: 'outputTokens', width: 80 },
+  { title: '费用(元)', dataIndex: 'costCny', width: 120 },
   { title: '错误', dataIndex: 'errorSummary' },
 ]
+
+const formatCost = (value?: number | string) => {
+  const amount = Number(value || 0)
+  if (!Number.isFinite(amount) || amount === 0) return '¥0'
+  if (amount < 0.000001) return `¥${amount.toFixed(8)}`
+  return `¥${amount.toFixed(6)}`
+}
 
 // 数据
 const data = ref<API.ChatHistory[]>([])

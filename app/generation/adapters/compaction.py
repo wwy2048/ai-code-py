@@ -127,6 +127,7 @@ class ContextCompactor:
                 call_kind="compaction",
                 duration_ms=summary_duration_ms,
                 input_tokens=summary_result.input_tokens,
+                cached_input_tokens=summary_result.cached_input_tokens,
                 output_tokens=summary_result.output_tokens,
                 retry_count=summary_result.retry_count,
             )
@@ -155,6 +156,9 @@ class ContextCompactor:
                 call_kind="compaction",
                 duration_ms=summary_duration_ms,
                 input_tokens=summary_result.input_tokens if summary_result is not None else 0,
+                cached_input_tokens=(
+                    summary_result.cached_input_tokens if summary_result is not None else 0
+                ),
                 output_tokens=summary_result.output_tokens if summary_result is not None else 0,
                 error_type=type(exc).__name__,
                 error_summary=str(getattr(exc, "summary", type(exc).__name__))[:256],

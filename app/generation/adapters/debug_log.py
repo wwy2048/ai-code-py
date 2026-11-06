@@ -77,6 +77,7 @@ class AgentDebugLogger:
                 "model": reply.model_name,
                 "durationMs": duration_ms,
                 "inputTokens": reply.input_tokens,
+                "cachedInputTokens": reply.cached_input_tokens,
                 "outputTokens": reply.output_tokens,
                 "retryCount": reply.retry_count,
                 "stopReason": reply.stop_reason,

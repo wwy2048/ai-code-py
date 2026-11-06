@@ -205,12 +205,15 @@ declare namespace API {
 
   type ChatModelCallLog = {
     id?: number
+    userId?: number
     callKind?: string
     modelName?: string
     status?: string
     durationMs?: number
     inputTokens?: number
+    cachedInputTokens?: number
     outputTokens?: number
+    costCny?: number
     errorType?: string
     errorSummary?: string
     retryCount?: number

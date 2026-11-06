@@ -105,11 +105,13 @@ class AnthropicCodeModel:
         if not text:
             raise RuntimeError("压缩模型返回空摘要")
         usage = getattr(response, "usage", None)
+        input_tokens, cached_input_tokens, output_tokens = self._usage_snapshot(usage)
         return SummaryResult(
             text=text,
             model_name=self._model,
-            input_tokens=int(getattr(usage, "input_tokens", 0) or 0),
-            output_tokens=int(getattr(usage, "output_tokens", 0) or 0),
+            input_tokens=input_tokens,
+            cached_input_tokens=cached_input_tokens,
+            output_tokens=output_tokens,
         )
 
     @staticmethod
@@ -162,15 +164,67 @@ class AnthropicCodeModel:
                         )
                     )
         usage = getattr(final, "usage", None)
+        input_tokens, cached_input_tokens, output_tokens = self._usage_snapshot(usage)
         return ModelReply(
             text="".join(text_parts),
             tool_calls=tool_calls,
-            input_tokens=int(getattr(usage, "input_tokens", 0) or 0),
-            output_tokens=int(getattr(usage, "output_tokens", 0) or 0),
+            input_tokens=input_tokens,
+            cached_input_tokens=cached_input_tokens,
+            output_tokens=output_tokens,
             model_name=self._model,
             retry_count=retry_count,
             stop_reason=getattr(final, "stop_reason", None),
         )
+
+    @staticmethod
+    def _usage_snapshot(usage: Any) -> tuple[int, int, int]:
+        """兼容 Anthropic、DeepSeek 和 OpenAI 风格的 usage 字段。"""
+
+        def lookup(*path: str) -> tuple[bool, int]:
+            value: Any = usage
+            for part in path:
+                if value is None:
+                    return False, 0
+                if isinstance(value, dict):
+                    if part not in value:
+                        return False, 0
+                    value = value[part]
+                else:
+                    if not hasattr(value, part):
+                        return False, 0
+                    value = getattr(value, part)
+            try:
+                return True, int(value or 0)
+            except (TypeError, ValueError):
+                return False, 0
+
+        input_found, input_value = lookup("input_tokens")
+        prompt_found, prompt_value = lookup("prompt_tokens")
+        output_found, output_value = lookup("output_tokens")
+        completion_found, completion_value = lookup("completion_tokens")
+        cache_read_found, cache_read = lookup("cache_read_input_tokens")
+        cache_write_found, cache_write = lookup("cache_creation_input_tokens")
+        deepseek_hit_found, deepseek_hit = lookup("prompt_cache_hit_tokens")
+        _, deepseek_miss = lookup("prompt_cache_miss_tokens")
+        nested_cache_found, nested_cache = lookup("prompt_tokens_details", "cached_tokens")
+
+        if deepseek_hit_found:
+            cached = deepseek_hit
+            total_input = prompt_value if prompt_found else input_value + cached + deepseek_miss
+        elif cache_read_found:
+            cached = cache_read
+            total_input = input_value + cached + (cache_write if cache_write_found else 0)
+        elif nested_cache_found:
+            cached = nested_cache
+            total_input = prompt_value if prompt_found else input_value
+        else:
+            cached = 0
+            total_input = prompt_value if prompt_found else input_value
+
+        total_input = max(0, total_input)
+        cached = min(max(0, cached), total_input)
+        output = completion_value if completion_found and not output_found else output_value
+        return total_input, cached, max(0, output)
 
     @staticmethod
     def _to_api_messages(messages: tuple[AgentMessage, ...]) -> list[dict[str, Any]]:

@@ -167,6 +167,7 @@ class AgentLoop:
                     model_name=reply.model_name or self._model_name,
                     duration_ms=duration_ms,
                     input_tokens=reply.input_tokens,
+                    cached_input_tokens=reply.cached_input_tokens,
                     output_tokens=reply.output_tokens,
                     error_type="Interrupted",
                     error_summary="用户中断当前模型步",
@@ -192,6 +193,7 @@ class AgentLoop:
                 model_name=reply.model_name or self._model_name,
                 duration_ms=duration_ms,
                 input_tokens=reply.input_tokens,
+                cached_input_tokens=reply.cached_input_tokens,
                 output_tokens=reply.output_tokens,
                 retry_count=reply.retry_count,
             )
@@ -362,6 +364,7 @@ class AgentLoop:
                 model_name=reply.model_name or self._model_name,
                 duration_ms=duration_ms,
                 input_tokens=reply.input_tokens,
+                cached_input_tokens=reply.cached_input_tokens,
                 output_tokens=reply.output_tokens,
                 retry_count=reply.retry_count,
             )

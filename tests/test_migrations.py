@@ -42,7 +42,14 @@ def test_baseline_creates_schema_on_empty_database(tmp_path: Path) -> None:
             row[1] for row in connection.execute("PRAGMA table_info(model_call_log)")
         }
         app_columns = {row[1] for row in connection.execute("PRAGMA table_info(app)")}
-    assert {"call_kind", "error_summary", "retry_count"} <= model_log_columns
+    assert {
+        "call_kind",
+        "error_summary",
+        "retry_count",
+        "cached_input_tokens",
+        "cost_cny",
+        "userId",
+    } <= model_log_columns
     assert "deploy_revision" in app_columns
     assert {
         "turn_id",
@@ -77,3 +84,34 @@ def test_baseline_preserves_existing_tables(tmp_path: Path) -> None:
     assert "sentinel" in user_columns
     assert "turn_id" in history_columns
     assert {"user", "app", "chat_history", "alembic_version"} <= tables
+
+
+
+def test_user_id_is_backfilled_for_existing_model_calls(tmp_path: Path) -> None:
+    database_path = tmp_path / "backfill.db"
+    config = _config_for(database_path)
+    command.upgrade(config, "0009_model_call_cache_cost")
+
+    with sqlite3.connect(database_path) as connection:
+        connection.execute(
+            "INSERT INTO app (id, userId, priority, isDelete) VALUES (1, 42, 0, 0)"
+        )
+        connection.execute(
+            """
+            INSERT INTO model_call_log (
+                id, appId, turn_id, model_name, call_kind, status, duration_ms,
+                input_tokens, cached_input_tokens, output_tokens, cost_cny,
+                retry_count
+            ) VALUES (1, 1, 'legacy-turn', 'deepseek-flash', 'generation', 'success', 1,
+                      100, 0, 10, 0, 0)
+            """
+        )
+        connection.commit()
+
+    command.upgrade(config, "head")
+
+    with sqlite3.connect(database_path) as connection:
+        user_id = connection.execute(
+            "SELECT userId FROM model_call_log WHERE turn_id = 'legacy-turn'"
+        ).fetchone()[0]
+    assert user_id == 42
