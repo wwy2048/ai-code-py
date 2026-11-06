@@ -20,6 +20,14 @@ class ExhaustedThenFinalModel:
 
     async def next_turn(self, request: ModelRequest, on_text: TextEmitter) -> ModelReply:
         self.requests.append(request)
+        if any(
+            isinstance(message, UserMessage) and "[系统收口指令]" in message.content
+            for message in request.messages
+        ):
+            if self.fail_final:
+                raise RuntimeError("final model failed")
+            await on_text("最终总结：页面已完成。")
+            return ModelReply(text="最终总结：页面已完成。")
         if request.tools:
             return ModelReply(
                 text="继续修改。",
@@ -31,10 +39,7 @@ class ExhaustedThenFinalModel:
                     )
                 ],
             )
-        if self.fail_final:
-            raise RuntimeError("final model failed")
-        await on_text("最终总结：页面已完成。")
-        return ModelReply(text="最终总结：页面已完成。")
+        return ModelReply(text="不应到达")
 
 
 async def _run_exhausted_loop(
@@ -62,7 +67,7 @@ async def _run_exhausted_loop(
     return loop, state, events
 
 
-async def test_finalize_disables_tools_and_persists_final_text(tmp_path: Path) -> None:
+async def test_finalize_preserves_tool_schema_and_persists_final_text(tmp_path: Path) -> None:
     model = ExhaustedThenFinalModel()
     loop, state, events = await _run_exhausted_loop(tmp_path, model)
 
@@ -72,7 +77,7 @@ async def test_finalize_disables_tools_and_persists_final_text(tmp_path: Path) -
     assert result.final_text == "最终总结：页面已完成。"
     assert state.final_assistant_text == result.final_text
     assert state.persisted_assistant_text is True
-    assert model.requests[-1].tools == ()
+    assert model.requests[-1].tools == model.requests[0].tools
     assert isinstance(model.requests[-1].messages[-1], UserMessage)
     assert "系统收口指令" in model.requests[-1].messages[-1].content
     assert any(

@@ -1037,6 +1037,13 @@ class EndlessHtmlToolModel:
 
     async def next_turn(self, request: ModelRequest, on_text: TextEmitter) -> ModelReply:
         self.requests.append(request)
+        if any(
+            isinstance(message, UserMessage) and "[系统收口指令]" in message.content
+            for message in request.messages
+        ):
+            text = "已达到工具预算，页面最终状态已保留。"
+            await on_text(text)
+            return ModelReply(text=text)
         if request.tools:
             return ModelReply(
                 text="继续完善页面。",
@@ -1085,7 +1092,7 @@ async def test_exhausted_html_turn_forces_final_text(app_context: AppContext) ->
     events = _parse_sse(response.text)
     text_deltas = [event["data"]["text"] for event in events if event["event"] == "text_delta"]
 
-    assert model.requests[-1].tools == ()
+    assert model.requests[-1].tools == model.requests[0].tools
     assert text_deltas[-1] == "已达到工具预算，页面最终状态已保留。"
     assert events[-2]["event"] == "text_delta"
     assert events[-1]["event"] == "turn_finished"
@@ -1112,6 +1119,13 @@ class EndlessVueToolModel:
 
     async def next_turn(self, request: ModelRequest, on_text: TextEmitter) -> ModelReply:
         self.requests.append(request)
+        if any(
+            isinstance(message, UserMessage) and "[系统收口指令]" in message.content
+            for message in request.messages
+        ):
+            text = "Vue 工具预算已耗尽，当前通过校验的页面已保留。"
+            await on_text(text)
+            return ModelReply(text=text)
         if request.tools:
             return ModelReply(
                 text="继续调整 Vue 页面。",
@@ -1176,7 +1190,7 @@ async def test_exhausted_vue_turn_forces_final_text_after_validation(
     events = _parse_sse(response.text)
     text_deltas = [event["data"]["text"] for event in events if event["event"] == "text_delta"]
 
-    assert model.requests[-1].tools == ()
+    assert model.requests[-1].tools == model.requests[0].tools
     assert text_deltas[-1] == "Vue 工具预算已耗尽，当前通过校验的页面已保留。"
     assert events[-2]["event"] == "text_delta"
     assert events[-1]["event"] == "turn_finished"

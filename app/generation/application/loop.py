@@ -263,7 +263,7 @@ class AgentLoop:
         return PhaseResult(exhausted=True, final_text=state.final_assistant_text)
 
     async def finalize(self, state: TurnState, *, reason: str) -> PhaseResult:
-        """工具预算耗尽后禁用工具，再请求一次最终文字总结。"""
+        """保持工具 schema 不变以复用前缀缓存，但只接受最终文字、不执行工具。"""
         state.model_round += 1
         round_index = state.model_round
         batch_id = f"{state.turn_id}:finalize"
@@ -288,7 +288,7 @@ class AgentLoop:
 
         request = ModelRequest(
             messages=tuple(state.messages),
-            tools=(),
+            tools=tuple(self._tools.definitions),
             model_name=self._model_name,
         )
         await self._hooks.before_model(
