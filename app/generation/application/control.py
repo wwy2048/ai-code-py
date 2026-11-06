@@ -61,6 +61,12 @@ class TurnControl:
         self._steering.clear()
         return items
 
+    def take_unconsumed_steering(self) -> list[tuple[str, str | None]]:
+        """Turn 收口时取走尚未进入模型上下文的 Steering，供上层降级。"""
+        items = list(self._steering)
+        self._steering.clear()
+        return items
+
     def has_steering(self) -> bool:
         return bool(self._steering)
 

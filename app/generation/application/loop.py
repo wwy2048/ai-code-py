@@ -269,14 +269,21 @@ class AgentLoop:
         if not items:
             return
         texts: list[str] = []
-        for text, _command_id in items:
+        consumed_items: list[dict[str, str | None]] = []
+        for text, command_id in items:
             texts.append(text)
+            consumed_items.append({"commandId": command_id, "text": text})
             state.messages.append(UserMessage(content=text))
             await self._journal.append_user(text)
         await self._journal.commit()
         await self._emit(
             "steering_consumed",
-            {"texts": texts, "batchId": batch_id, "roundIndex": round_index},
+            {
+                "texts": texts,
+                "items": consumed_items,
+                "batchId": batch_id,
+                "roundIndex": round_index,
+            },
         )
 
     async def _apply_pending_control(

@@ -116,6 +116,7 @@ class AgentTurnExecutor:
             await conversation.append_user(prompt)
             await conversation.append_turn_lifecycle("started")
             await conversation.commit()
+            await emit("user_message_committed", {"text": prompt})
 
             workspace = Workspace(self._workspace_root_path / f"{code_gen_type}_{app_id}")
             profile = build_codegen_profile(

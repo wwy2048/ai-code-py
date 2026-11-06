@@ -18,6 +18,15 @@ class TurnEvent:
 
 
 @dataclass
+class QueueEvent:
+    """App 级队列事件；与单个 Turn 的 SSE 游标相互独立。"""
+
+    id: int
+    event: str
+    data: dict[str, Any]
+
+
+@dataclass
 class TurnJob:
     """单个 Turn 的重放缓冲；多个 SSE reader 各自维护游标。"""
 
@@ -111,6 +120,6 @@ class TurnJob:
             await self._changed.wait()
 
 
-def encode_sse(event: TurnEvent) -> str:
+def encode_sse(event: TurnEvent | QueueEvent) -> str:
     payload = json.dumps(event.data, ensure_ascii=False)
     return f"id: {event.id}\nevent: {event.event}\ndata: {payload}\n\n"

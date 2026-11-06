@@ -10,6 +10,7 @@ class EventType(StrEnum):
     """生成上下文对外发布的稳定事件类型。"""
 
     TURN_STARTED = "turn_started"
+    USER_MESSAGE_COMMITTED = "user_message_committed"
     TEXT_DELTA = "text_delta"
     TOOL_STARTED = "tool_started"
     TOOL_FINISHED = "tool_finished"

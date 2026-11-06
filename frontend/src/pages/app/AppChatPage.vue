@@ -61,7 +61,7 @@
             </a-button>
           </div>
 
-          <div v-for="(message, index) in messages" :key="message.id || index" class="message-item">
+          <div v-for="(message, index) in messages" :key="message.commandId || message.id || index" class="message-item">
             <div v-if="message.type === 'user'" class="user-message">
               <div class="message-content">{{ message.content }}</div>
               <div class="message-avatar">
@@ -102,69 +102,110 @@
           </div>
         </div>
 
-        <!-- 用户消息输入框 -->
+        <!-- 用户消息输入框与 Followup 队列 -->
         <div class="input-container">
-          <div v-if="isGenerating && isOwner" class="turn-control-bar">
-            <a-textarea
-              v-model:value="controlInput"
-              class="turn-control-input"
-              placeholder="运行中插话或输入转向要求"
-              :rows="2"
-              :maxlength="1000"
-              :disabled="controlSending"
-              @keydown.enter.exact.prevent="submitTurnControl('steer')"
-            />
-            <div class="turn-control-actions">
-              <a-button
-                size="small"
-                :loading="controlSending"
-                :disabled="!controlInput.trim()"
-                @click="submitTurnControl('steer')"
-              >插话</a-button>
-              <a-button
-                size="small"
-                :loading="controlSending"
-                :disabled="!controlInput.trim()"
-                @click="submitTurnControl('redirect')"
-              >转向</a-button>
-              <a-button
-                size="small"
-                danger
-                :loading="controlSending"
-                @click="submitTurnControl('interrupt')"
-              >停止</a-button>
+          <div v-if="hasVisibleQueue" class="queue-panel">
+            <div
+              v-for="item in queuedItems"
+              :key="item.commandId"
+              class="queue-row"
+            >
+              <div class="queue-row-content">
+                <span class="queue-row-icon">↳</span>
+                <a-tooltip :title="item.message" placement="topLeft">
+                  <span class="queue-row-text">{{ item.message }}</span>
+                </a-tooltip>
+              </div>
+              <div class="queue-row-actions">
+                <a-button type="text" size="small" @click="steerQueuedItem(item)">
+                  Steer
+                </a-button>
+                <a-tooltip title="删除">
+                  <a-button type="text" size="small" @click="deleteQueuedItem(item)">
+                    <template #icon><DeleteOutlined /></template>
+                  </a-button>
+                </a-tooltip>
+              </div>
+            </div>
+
+            <div v-if="pausedItems.length" class="paused-queue">
+              <div class="queue-paused-header">
+                <div class="queue-paused-title">
+                  <PauseOutlined />
+                  <span>Queue paused because you interrupted</span>
+                </div>
+                <a-button type="text" size="small" @click="resumeQueue">
+                  <template #icon><CaretRightOutlined /></template>
+                  Resume
+                </a-button>
+              </div>
+              <div
+                v-for="(item, index) in pausedItems"
+                :key="item.commandId"
+                class="queue-row"
+              >
+                <div class="queue-row-content">
+                  <span class="queue-row-icon">↳</span>
+                  <a-tooltip :title="item.message" placement="topLeft">
+                    <span class="queue-row-text">{{ item.message }}</span>
+                  </a-tooltip>
+                </div>
+                <div class="queue-row-actions">
+                  <a-button
+                    v-if="index > 0"
+                    type="text"
+                    size="small"
+                    @click="steerQueuedItem(item)"
+                  >
+                    Steer
+                  </a-button>
+                  <a-tooltip title="删除">
+                    <a-button type="text" size="small" @click="deleteQueuedItem(item)">
+                      <template #icon><DeleteOutlined /></template>
+                    </a-button>
+                  </a-tooltip>
+                </div>
+              </div>
             </div>
           </div>
+
           <div class="input-wrapper">
             <a-tooltip v-if="!isOwner" title="无法在别人的作品下对话哦~" placement="top">
               <a-textarea
                 v-model:value="userInput"
                 placeholder="请描述你想生成的网站，越详细效果越好哦"
-                :rows="4"
+                :auto-size="{ minRows: 2, maxRows: 6 }"
                 :maxlength="1000"
-                @keydown.enter.prevent="sendMessage"
-                :disabled="isGenerating || !isOwner"
+                @keydown.enter.exact.prevent="handleComposerSend"
+                :disabled="true"
               />
             </a-tooltip>
             <a-textarea
               v-else
               v-model:value="userInput"
               placeholder="请描述你想生成的网站，越详细效果越好哦"
-              :rows="4"
+              :auto-size="{ minRows: 2, maxRows: 6 }"
               :maxlength="1000"
-              @keydown.enter.prevent="sendMessage"
-              :disabled="isGenerating"
+              @keydown.enter.exact.prevent="handleComposerSend"
             />
             <div class="input-actions">
               <a-button
-                type="primary"
-                @click="sendMessage"
-                :loading="isGenerating"
-                :disabled="!isOwner"
+                v-if="isGenerating && !userInput.trim() && isOwner"
+                class="composer-action stop-action"
+                :loading="stopping"
+                @click="stopGeneration"
               >
-                <template #icon>
-                  <SendOutlined />
-                </template>
+                <span class="stop-square"></span>
+              </a-button>
+              <a-button
+                v-else
+                type="primary"
+                class="composer-action send-action"
+                :loading="queueSending || sendingMessage"
+                :disabled="!isOwner || !userInput.trim()"
+                @click="handleComposerSend"
+              >
+                <template #icon><SendOutlined /></template>
               </a-button>
             </div>
           </div>
@@ -204,6 +245,23 @@
       </div>
     </div>
 
+    <!-- 存在暂停队列时的新消息确认 -->
+    <a-modal
+      v-model:open="queueConflictVisible"
+      title="存在暂停的 Followup"
+      :footer="null"
+      :closable="true"
+      @cancel="cancelQueueConflict"
+    >
+      <p class="queue-conflict-description">
+        当前有 {{ pausedItems.length }} 条因中断暂停的 Followup。要清空队列，还是保留队列并发送？
+      </p>
+      <div class="queue-conflict-actions">
+        <a-button danger @click="resolveQueueConflict(true)">Clear</a-button>
+        <a-button type="primary" @click="resolveQueueConflict(false)">发送</a-button>
+      </div>
+    </a-modal>
+
     <!-- 应用详情弹窗 -->
     <AppDetailModal
       v-model:open="appDetailVisible"
@@ -234,11 +292,15 @@ import {
 } from '@/api/appController'
 import { listAppChatHistory } from '@/api/chatHistoryController'
 import {
+  connectGenerationQueue,
   createRequestId,
+  sendQueueControl,
   sendTurnControl,
   streamGeneration,
+  type QueuedItem,
+  type QueueSnapshot,
   type StreamEvent,
-  type TurnControlAction,
+  type UserMessageConsumedEvent,
 } from '@/api/generationStream'
 import { CodeGenTypeEnum, formatCodeGenType } from '@/utils/codeGenTypes'
 import request from '@/request'
@@ -252,11 +314,14 @@ import { API_BASE_URL, getDeployUrl, getStaticPreviewUrl } from '@/config/env'
 import { openExternalUrl } from '@/utils/openExternal'
 
 import {
+  CaretRightOutlined,
   CloudUploadOutlined,
-  SendOutlined,
+  DeleteOutlined,
+  DownloadOutlined,
   ExportOutlined,
   InfoCircleOutlined,
-  DownloadOutlined
+  PauseOutlined,
+  SendOutlined,
 } from '@ant-design/icons-vue'
 
 const route = useRoute()
@@ -291,16 +356,26 @@ interface Message {
   id?: number
   createTime?: string
   turnId?: string
+  commandId?: string
 }
 
 const messages = ref<Message[]>([])
 const userInput = ref('')
-const controlInput = ref('')
-const controlSending = ref(false)
 const isGenerating = ref(false)
 const activeTurnId = ref<string>()
+const stopping = ref(false)
+const sendingMessage = ref(false)
+const queueSending = ref(false)
+const queuedItems = ref<QueuedItem[]>([])
+const pausedItems = ref<QueuedItem[]>([])
+const queueConflictVisible = ref(false)
+const pendingQueueMessage = ref('')
+const consumedCommandIds = new Set<string>()
+const queueVersion = ref(0)
+let queueEventSource: EventSource | null = null
 const messagesContainer = ref<HTMLElement>()
 const hasInitialConversation = ref(false) // 标记是否已经进行过初始对话
+const hasVisibleQueue = computed(() => queuedItems.value.length > 0 || pausedItems.value.length > 0)
 
 // 对话历史相关
 const chatHistory = ref<API.ChatHistory[]>([])
@@ -397,17 +472,26 @@ const fetchChatHistory = async () => {
           .map(message => message.turnId as string)
       )
       const historyMessages: Message[] = []
+      const existingUserKeys = new Set(
+        messages.value
+          .filter((item) => item.type === 'user')
+          .map((item) => `${item.turnId || ''}::${item.content}`)
+      )
 
       for (const record of records) {
         const turnId = record.turnId || ''
         if (record.messageType === 'user') {
-          historyMessages.push({
-            type: 'user',
-            content: record.message || '',
-            id: record.id,
-            createTime: record.createTime,
-            turnId: record.turnId,
-          })
+          const userKey = `${turnId}::${record.message || ''}`
+          if (!existingUserKeys.has(userKey)) {
+            historyMessages.push({
+              type: 'user',
+              content: record.message || '',
+              id: record.id,
+              createTime: record.createTime,
+              turnId: record.turnId,
+            })
+            existingUserKeys.add(userKey)
+          }
           if (
             turnId &&
             !visibleAssistantTurns.has(turnId) &&
@@ -483,6 +567,7 @@ const fetchAppInfo = async () => {
   }
 
   appId.value = id
+  connectQueueEvents()
 
   try {
     const res = await getAppVoById({ id: id as unknown as number })
@@ -521,59 +606,223 @@ const fetchAppInfo = async () => {
 
 // 发送初始消息
 const sendInitialMessage = async (prompt: string) => {
-  // 添加用户消息
-  messages.value.push({
-    type: 'user',
-    content: prompt,
-  })
-
-  // 添加AI消息占位符
-  const aiMessageIndex = messages.value.length
-  messages.value.push({
-    type: 'ai',
-    content: '',
-    blocks: [],
-    loading: true,
-  })
-
-  await nextTick()
-  scrollToBottom()
-
-  // 开始生成
-  isGenerating.value = true
-  await generateCode(prompt, aiMessageIndex)
+  await startDirectMessage(prompt)
 }
 
-// 发送消息
-const sendMessage = async () => {
-  if (!userInput.value.trim() || isGenerating.value) {
+const startDirectMessage = async (content: string, clearPaused = false) => {
+  if (!appId.value || sendingMessage.value) return
+  sendingMessage.value = true
+  try {
+    const baseURL = request.defaults.baseURL || API_BASE_URL
+    if (clearPaused) {
+      await sendQueueControl({
+        baseURL,
+        appId: Number(appId.value),
+        action: 'clear_paused',
+        commandId: createRequestId(),
+      })
+    }
+    userInput.value = ''
+    messages.value.push({ type: 'user', content })
+    const aiMessageIndex = messages.value.length
+    messages.value.push({
+      type: 'ai',
+      content: '',
+      blocks: [],
+      loading: true,
+    })
+    await nextTick()
+    scrollToBottom()
+    isGenerating.value = true
+    void generateCode(content, aiMessageIndex)
+    sendingMessage.value = false
+  } catch (error) {
+    console.error('发送消息失败：', error)
+    message.error(error instanceof Error ? error.message : '发送消息失败')
+    sendingMessage.value = false
+  }
+}
+
+const enqueueFollowup = async (content: string, clearPaused = false) => {
+  if (!appId.value || queueSending.value) return
+  queueSending.value = true
+  try {
+    const baseURL = request.defaults.baseURL || API_BASE_URL
+    const ack = await sendQueueControl({
+      baseURL,
+      appId: Number(appId.value),
+      action: 'enqueue',
+      commandId: createRequestId(),
+      message: content,
+      clearPaused,
+    })
+    applyQueueSnapshot(ack.queue)
+    userInput.value = ''
+  } catch (error) {
+    console.error('排队消息发送失败：', error)
+    message.error(error instanceof Error ? error.message : '排队消息发送失败')
+  } finally {
+    queueSending.value = false
+  }
+}
+
+const handleComposerSend = async () => {
+  const content = userInput.value.trim()
+  if (!content || !isOwner.value || queueSending.value || sendingMessage.value) return
+  if (pausedItems.value.length > 0) {
+    pendingQueueMessage.value = content
+    queueConflictVisible.value = true
     return
   }
+  if (isGenerating.value) {
+    await enqueueFollowup(content)
+  } else {
+    await startDirectMessage(content)
+  }
+}
 
-  const message = userInput.value.trim()
-  userInput.value = ''
+const cancelQueueConflict = () => {
+  queueConflictVisible.value = false
+  pendingQueueMessage.value = ''
+}
 
-  // 添加用户消息
+const resolveQueueConflict = async (clearPaused: boolean) => {
+  const content = pendingQueueMessage.value
+  queueConflictVisible.value = false
+  pendingQueueMessage.value = ''
+  if (!content) return
+  if (isGenerating.value) {
+    await enqueueFollowup(content, clearPaused)
+  } else {
+    await startDirectMessage(content, clearPaused)
+  }
+}
+
+const applyQueueSnapshot = (snapshot: QueueSnapshot) => {
+  const version = Number(snapshot.version || 0)
+  if (version < queueVersion.value) return
+  queueVersion.value = version
+  queuedItems.value = snapshot.queuedItems || []
+  pausedItems.value = snapshot.pausedItems || []
+}
+
+const appendConsumedUserMessage = (event: UserMessageConsumedEvent) => {
+  if (consumedCommandIds.has(event.commandId)) {
+    applyQueueSnapshot(event.queue)
+    return false
+  }
+  consumedCommandIds.add(event.commandId)
   messages.value.push({
     type: 'user',
-    content: message,
+    content: event.text,
+    turnId: event.turnId,
+    commandId: event.commandId,
   })
+  applyQueueSnapshot(event.queue)
+  return true
+}
 
-  // 添加AI消息占位符
+const handleUserMessageConsumed = (event: UserMessageConsumedEvent) => {
+  const isNew = appendConsumedUserMessage(event)
+  if (!isNew) return
+  scrollToBottom()
+  if (event.mode !== 'followup') return
+  const alreadyAttached = messages.value.some(
+    (item) => item.type === 'ai' && item.turnId === event.turnId
+  )
+  if (alreadyAttached) return
   const aiMessageIndex = messages.value.length
   messages.value.push({
     type: 'ai',
     content: '',
     blocks: [],
     loading: true,
+    turnId: event.turnId,
   })
-
-  await nextTick()
-  scrollToBottom()
-
-  // 开始生成
   isGenerating.value = true
-  await generateCode(message, aiMessageIndex)
+  activeTurnId.value = event.turnId
+  void nextTick().then(() => scrollToBottom())
+  void generateCode(event.text, aiMessageIndex, event.turnId)
+}
+
+const connectQueueEvents = () => {
+  queueEventSource?.close()
+  if (!appId.value) return
+  const baseURL = request.defaults.baseURL || API_BASE_URL
+  queueEventSource = connectGenerationQueue({
+    baseURL,
+    appId: Number(appId.value),
+    handlers: {
+      onSnapshot: applyQueueSnapshot,
+      onChanged: applyQueueSnapshot,
+      onConsumed: handleUserMessageConsumed,
+      onError: () => {
+        console.warn('生成队列事件流连接中断，浏览器将自动重连')
+      },
+    },
+  })
+}
+
+const steerQueuedItem = async (item: QueuedItem) => {
+  if (!appId.value || queueSending.value) return
+  queueSending.value = true
+  try {
+    const baseURL = request.defaults.baseURL || API_BASE_URL
+    const ack = await sendQueueControl({
+      baseURL,
+      appId: Number(appId.value),
+      action: 'steer',
+      commandId: createRequestId(),
+      itemId: item.commandId,
+    })
+    applyQueueSnapshot(ack.queue)
+  } catch (error) {
+    console.error('Steer 失败：', error)
+    message.error(error instanceof Error ? error.message : 'Steer 失败')
+  } finally {
+    queueSending.value = false
+  }
+}
+
+const deleteQueuedItem = async (item: QueuedItem) => {
+  if (!appId.value || queueSending.value) return
+  queueSending.value = true
+  try {
+    const baseURL = request.defaults.baseURL || API_BASE_URL
+    const ack = await sendQueueControl({
+      baseURL,
+      appId: Number(appId.value),
+      action: 'delete',
+      commandId: createRequestId(),
+      itemId: item.commandId,
+    })
+    applyQueueSnapshot(ack.queue)
+  } catch (error) {
+    console.error('删除排队消息失败：', error)
+    message.error(error instanceof Error ? error.message : '删除排队消息失败')
+  } finally {
+    queueSending.value = false
+  }
+}
+
+const resumeQueue = async () => {
+  if (!appId.value || queueSending.value) return
+  queueSending.value = true
+  try {
+    const baseURL = request.defaults.baseURL || API_BASE_URL
+    const ack = await sendQueueControl({
+      baseURL,
+      appId: Number(appId.value),
+      action: 'resume',
+      commandId: createRequestId(),
+    })
+    applyQueueSnapshot(ack.queue)
+  } catch (error) {
+    console.error('恢复队列失败：', error)
+    message.error(error instanceof Error ? error.message : '恢复队列失败')
+  } finally {
+    queueSending.value = false
+  }
 }
 
 // 生成代码 - SSE 协议由 API 客户端处理
@@ -725,7 +974,7 @@ const generateCode = async (
         appendText('> 子代理执行失败，主流程将继续处理。', 'status:subagent')
         break
       case 'steering_consumed':
-        appendControlNote(`> 已应用插话：${String(data.texts || '')}`)
+        // 用户消息由 App 队列流统一落 UI，避免 Turn SSE 与队列 SSE 重复插入。
         break
       case 'step_cancelled':
         appendControlNote('> 当前模型步已取消，正在安全收口。')
@@ -742,17 +991,22 @@ const generateCode = async (
         break
 
       case 'turn_finished': {
-        isGenerating.value = false
-        activeTurnId.value = undefined
+        const finishedTurnId = String(data.turnId || requestId)
         const messageItem = messages.value[aiMessageIndex]
-        messageItem.loading = false
-        messageItem.blocks?.forEach(block => {
-          if (block.type !== 'tool_group') return
-          block.running = false
-          block.tools.forEach(activity => {
-            if (activity.status === 'running') activity.status = 'interrupted'
+        if (messageItem) {
+          messageItem.loading = false
+          messageItem.blocks?.forEach(block => {
+            if (block.type !== 'tool_group') return
+            block.running = false
+            block.tools.forEach(activity => {
+              if (activity.status === 'running') activity.status = 'interrupted'
+            })
           })
-        })
+        }
+        if (activeTurnId.value === finishedTurnId) {
+          isGenerating.value = false
+          activeTurnId.value = undefined
+        }
         if (data.status === 'completed') {
           setTimeout(() => updatePreview(), 500)
         } else if (data.status === 'interrupted') {
@@ -797,52 +1051,27 @@ const appendControlNote = (content: string) => {
   scrollToBottom()
 }
 
-const submitTurnControl = async (action: TurnControlAction) => {
+const stopGeneration = async () => {
   const turnId = activeTurnId.value
-  if (!turnId || !appId.value || controlSending.value) return
-  const text = controlInput.value.trim()
-  if (action !== 'interrupt' && !text) {
-    message.warning('请先输入插话或转向内容')
-    return
-  }
-
-  controlSending.value = true
+  if (!turnId || !appId.value || stopping.value) return
+  stopping.value = true
   try {
     const baseURL = request.defaults.baseURL || API_BASE_URL
     const ack = await sendTurnControl({
       baseURL,
       appId: Number(appId.value),
       turnId,
-      action,
-      message: action === 'interrupt' ? undefined : text,
+      action: 'interrupt',
       commandId: createRequestId(),
     })
-
-    if (ack.status === 'degraded_to_followup' && text) {
-      messages.value.push({ type: 'user', content: text })
-      const aiMessageIndex = messages.value.length
-      messages.value.push({ type: 'ai', content: '', blocks: [], loading: true })
-      isGenerating.value = true
-      controlInput.value = ''
-      void generateCode(text, aiMessageIndex, ack.turnId)
-      return
-    }
-
-    if (ack.status === 'accepted' || ack.status === 'duplicate') {
-      if (action === 'steer') appendControlNote(`> 已发送插话：${text}`)
-      if (action === 'redirect') appendControlNote(`> 已发送转向：${text}`)
-      if (action === 'interrupt') appendControlNote('> 已请求停止当前生成。')
-      controlInput.value = ''
-    } else if (ack.status === 'not_active') {
-      message.warning('当前回合已结束，控制命令未生效')
-    } else if (ack.status === 'stale') {
-      message.warning('目标回合已过期，控制命令未生效')
+    if (ack.status !== 'accepted' && ack.status !== 'duplicate') {
+      message.warning('当前回合已结束，停止命令未生效')
     }
   } catch (error) {
-    console.error('发送控制命令失败：', error)
-    message.error(error instanceof Error ? error.message : '控制命令发送失败')
+    console.error('停止生成失败：', error)
+    message.error(error instanceof Error ? error.message : '停止生成失败')
   } finally {
-    controlSending.value = false
+    stopping.value = false
   }
 }
 
@@ -850,12 +1079,18 @@ const submitTurnControl = async (action: TurnControlAction) => {
 const handleError = (error: unknown, aiMessageIndex: number) => {
   console.error('生成代码失败：', error)
   const content = '抱歉，生成过程中出现了错误，请重试。'
-  messages.value[aiMessageIndex].content = content
-  messages.value[aiMessageIndex].blocks = [{ type: 'text', batchId: 'error', content }]
-  messages.value[aiMessageIndex].loading = false
+  const messageItem = messages.value[aiMessageIndex]
+  const failedTurnId = messageItem?.turnId
+  if (messageItem) {
+    messageItem.content = content
+    messageItem.blocks = [{ type: 'text', batchId: 'error', content }]
+    messageItem.loading = false
+  }
   message.error('生成失败，请重试')
-  isGenerating.value = false
-  activeTurnId.value = undefined
+  if (!failedTurnId || activeTurnId.value === failedTurnId) {
+    isGenerating.value = false
+    activeTurnId.value = undefined
+  }
 }
 
 // 更新预览
@@ -1003,6 +1238,7 @@ onMounted(() => {
 // 清理资源
 onUnmounted(() => {
   activeAbortController?.abort()
+  queueEventSource?.close()
 })
 </script>
 
@@ -1011,8 +1247,9 @@ onUnmounted(() => {
   height: 100vh;
   display: flex;
   flex-direction: column;
-  padding: 16px;
-  background: #fdfdfd;
+  padding: 12px 16px 16px;
+  background: #f6f6f4;
+  color: #242422;
 }
 
 /* 顶部栏 */
@@ -1020,7 +1257,7 @@ onUnmounted(() => {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 12px 16px;
+  padding: 8px 8px 14px;
 }
 
 .header-left {
@@ -1033,20 +1270,19 @@ onUnmounted(() => {
   margin: 0;
   font-size: 18px;
   font-weight: 600;
-  color: #1a1a1a;
+  color: #1f1f1d;
 }
 
 .header-right {
   display: flex;
-  gap: 12px;
+  gap: 10px;
 }
 
 /* 主要内容区域 */
 .main-content {
   flex: 1;
   display: flex;
-  gap: 16px;
-  padding: 8px;
+  gap: 12px;
   overflow: hidden;
 }
 
@@ -1055,21 +1291,23 @@ onUnmounted(() => {
   flex: 2;
   display: flex;
   flex-direction: column;
-  background: white;
-  border-radius: 8px;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  min-width: 0;
+  background: #fbfbfa;
+  border: 1px solid #e8e8e5;
+  border-radius: 24px;
+  box-shadow: 0 10px 30px rgba(28, 28, 25, 0.04);
   overflow: hidden;
 }
 
 .messages-container {
   flex: 1;
-  padding: 16px;
+  padding: 24px 20px;
   overflow-y: auto;
   scroll-behavior: smooth;
 }
 
 .message-item {
-  margin-bottom: 12px;
+  margin-bottom: 16px;
 }
 
 .user-message {
@@ -1083,26 +1321,28 @@ onUnmounted(() => {
   display: flex;
   justify-content: flex-start;
   align-items: flex-start;
-  gap: 8px;
+  gap: 10px;
 }
 
 .message-content {
-  max-width: 70%;
-  padding: 12px 16px;
-  border-radius: 12px;
-  line-height: 1.5;
+  max-width: 76%;
+  padding: 11px 15px;
+  border-radius: 18px;
+  line-height: 1.65;
   word-wrap: break-word;
 }
 
 .user-message .message-content {
-  background: #1890ff;
-  color: white;
+  background: #f0f0ed;
+  color: #242422;
+  border: 1px solid #e7e7e3;
 }
 
 .ai-message .message-content {
-  background: #f5f5f5;
-  color: #1a1a1a;
-  padding: 8px 12px;
+  max-width: 84%;
+  background: transparent;
+  color: #242422;
+  padding: 4px 8px;
 }
 
 .message-avatar {
@@ -1123,50 +1363,195 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   gap: 8px;
-  color: #666;
+  color: #777772;
 }
 
-.turn-control-bar {
-  display: flex;
-  gap: 10px;
-  align-items: flex-end;
-  padding: 10px;
+/* Followup 队列 */
+.queue-panel {
   margin-bottom: 10px;
-  border: 1px solid #d6e4ff;
-  border-radius: 8px;
-  background: #f5f9ff;
+  overflow: hidden;
+  background: #fff;
+  border: 1px solid #e8e8e5;
+  border-radius: 22px;
+  box-shadow: 0 6px 18px rgba(28, 28, 25, 0.035);
 }
 
-.turn-control-input {
-  flex: 1;
-  resize: none;
-}
-
-.turn-control-actions {
+.queue-row {
   display: flex;
-  gap: 6px;
-  padding-bottom: 2px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 44px;
+  padding: 7px 12px;
+  border-bottom: 1px solid #f0f0ed;
 }
 
+.queue-row:last-child {
+  border-bottom: none;
+}
+
+.queue-row-content {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  flex: 1;
+}
+
+.queue-row-icon {
+  flex-shrink: 0;
+  color: #93938e;
+  font-size: 17px;
+  line-height: 1;
+}
+
+.queue-row-text {
+  display: block;
+  overflow: hidden;
+  color: #3d3d39;
+  font-size: 14px;
+  line-height: 1.5;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.queue-row-actions {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 2px;
+}
+
+.queue-row-actions :deep(.ant-btn) {
+  color: #6f6f6a;
+  font-size: 13px;
+}
+
+.queue-row-actions :deep(.ant-btn:hover) {
+  color: #242422;
+  background: #f5f5f2;
+}
+
+.queue-paused-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  color: #858580;
+  font-size: 14px;
+  border-bottom: 1px solid #f0f0ed;
+}
+
+.queue-paused-title {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-width: 0;
+}
+
+.queue-paused-title span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.queue-paused-header :deep(.ant-btn) {
+  flex-shrink: 0;
+  color: #6f6f6a;
+  font-size: 14px;
+}
+
+.queue-conflict-description {
+  margin: 8px 0 0;
+  color: #656560;
+  line-height: 1.7;
+}
+
+.queue-conflict-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 24px;
+}
 
 /* 输入区域 */
 .input-container {
-  padding: 16px;
-  background: white;
+  padding: 12px 16px 16px;
+  background: linear-gradient(180deg, rgba(251, 251, 250, 0) 0%, #fbfbfa 28%);
 }
 
 .input-wrapper {
   position: relative;
+  padding: 10px 56px 10px 14px;
+  background: #fff;
+  border: 1px solid #e4e4e0;
+  border-radius: 22px;
+  box-shadow: 0 4px 16px rgba(28, 28, 25, 0.04);
 }
 
-.input-wrapper .ant-input {
-  padding-right: 50px;
+.input-wrapper :deep(.ant-input) {
+  min-height: 42px;
+  padding: 0;
+  color: #242422;
+  font-size: 14px;
+  line-height: 1.6;
+  background: transparent;
+  border: none;
+  box-shadow: none;
+  resize: none;
+}
+
+.input-wrapper :deep(.ant-input::placeholder) {
+  color: #aaa9a4;
 }
 
 .input-actions {
   position: absolute;
-  bottom: 8px;
-  right: 8px;
+  right: 10px;
+  bottom: 10px;
+}
+
+.composer-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  min-width: 36px;
+  padding: 0;
+  border-radius: 12px;
+}
+
+.send-action {
+  background: #2f6bff;
+  border-color: #2f6bff;
+  box-shadow: 0 3px 10px rgba(47, 107, 255, 0.24);
+}
+
+.send-action:hover {
+  background: #245eea;
+  border-color: #245eea;
+}
+
+.stop-action {
+  color: #242422;
+  background: #fff;
+  border-color: #e2e2de;
+  box-shadow: none;
+}
+
+.stop-action:hover {
+  color: #000;
+  background: #f5f5f2;
+  border-color: #d8d8d3;
+}
+
+.stop-square {
+  width: 12px;
+  height: 12px;
+  background: #20201e;
+  border-radius: 2px;
 }
 
 /* 右侧预览区域 */

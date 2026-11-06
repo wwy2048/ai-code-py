@@ -3,7 +3,7 @@ from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import cast
 
-from fastapi import APIRouter, Header, Request
+from fastapi import APIRouter, Header, Query, Request
 from fastapi.responses import Response, StreamingResponse
 
 from app.app_assets import AppAssetCleaner
@@ -14,10 +14,16 @@ from app.download import WorkspaceArchiveError, build_workspace_zip
 from app.errors import BusinessError
 from app.generation.adapters.memory import MemoryStore
 from app.generation.domain.commands import (
+    ClearPausedFollowupsCommand,
     ControlCommand,
+    DeleteQueuedCommand,
+    EnqueueFollowupCommand,
     InterruptTurnCommand,
+    QueueCommand,
     RedirectTurnCommand,
+    ResumeFollowupsCommand,
     StartTurnCommand,
+    SteerQueuedCommand,
     SteerTurnCommand,
 )
 from app.response import success
@@ -29,6 +35,7 @@ from app.schemas import (
     AppUpdateRequest,
     DeleteRequest,
     GenerationControlRequest,
+    GenerationQueueRequest,
     GenerationRequest,
 )
 from app.services.apps import (
@@ -324,3 +331,71 @@ async def control_generation(
         )
     ack = await runtime.control(command)
     return success(ack.as_dict())
+
+@router.post("/chat/queue/control")
+async def control_generation_queue(
+    payload: GenerationQueueRequest,
+    request: Request,
+    session: DbSession,
+    current_user: CurrentUser,
+) -> dict:
+    app = await require_owned_app(session, payload.app_id, current_user.id)
+    runtime = request.app.state.generation_runtime
+    command_id = payload.command_id
+    queue_command: QueueCommand
+    if payload.action == "enqueue":
+        queue_command = EnqueueFollowupCommand(
+            app_id=app.id,
+            user_id=current_user.id,
+            code_gen_type=app.code_gen_type or "html",
+            message=payload.message or "",
+            command_id=command_id,
+            clear_paused=payload.clear_paused,
+        )
+    elif payload.action == "steer":
+        queue_command = SteerQueuedCommand(
+            app_id=app.id,
+            command_id=command_id,
+            item_id=payload.item_id or "",
+        )
+    elif payload.action == "delete":
+        queue_command = DeleteQueuedCommand(
+            app_id=app.id,
+            command_id=command_id,
+            item_id=payload.item_id or "",
+        )
+    elif payload.action == "resume":
+        queue_command = ResumeFollowupsCommand(app_id=app.id, command_id=command_id)
+    else:
+        queue_command = ClearPausedFollowupsCommand(app_id=app.id, command_id=command_id)
+    ack = await runtime.queue_control(queue_command)
+    return success(ack.as_dict())
+
+
+@router.get("/chat/queue/events")
+async def stream_generation_queue(
+    request: Request,
+    session: DbSession,
+    current_user: CurrentUser,
+    app_id: int = Query(alias="appId"),
+    last_event_id: str | None = Header(default=None, alias="Last-Event-ID"),
+) -> StreamingResponse:
+    app = await require_owned_app(session, app_id, current_user.id)
+    runtime = request.app.state.generation_runtime
+    try:
+        cursor = int(last_event_id) if last_event_id else None
+    except ValueError:
+        cursor = None
+
+    async def stream_queue_events() -> AsyncIterator[str]:
+        async for event in runtime.stream_queue(app.id, cursor):
+            yield runtime.encode_sse(event)
+
+    return StreamingResponse(
+        stream_queue_events(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
+    )

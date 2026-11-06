@@ -145,3 +145,104 @@ export const sendTurnControl = async ({
   }
   return payload.data as TurnControlAck
 }
+
+export type QueueAction = 'enqueue' | 'steer' | 'delete' | 'resume' | 'clear_paused'
+
+export interface QueuedItem {
+  commandId: string
+  message: string
+  status: 'queued' | 'paused'
+}
+
+export interface QueueSnapshot {
+  appId: number
+  version: number
+  paused: boolean
+  activeTurnId?: string | null
+  queuedItems: QueuedItem[]
+  pausedItems: QueuedItem[]
+}
+
+export interface QueueControlAck {
+  status: string
+  action: QueueAction
+  commandId: string
+  queue: QueueSnapshot
+}
+
+interface SendQueueControlOptions {
+  baseURL: string
+  appId: number
+  action: QueueAction
+  commandId: string
+  itemId?: string
+  message?: string
+  clearPaused?: boolean
+}
+
+export const sendQueueControl = async ({
+  baseURL,
+  appId,
+  action,
+  commandId,
+  itemId,
+  message,
+  clearPaused,
+}: SendQueueControlOptions): Promise<QueueControlAck> => {
+  const response = await fetch(`${baseURL}/app/chat/queue/control`, {
+    method: 'POST',
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ appId, action, commandId, itemId, message, clearPaused }),
+  })
+  const payload = await response.json()
+  if (!response.ok || payload.code !== 0 || !payload.data) {
+    throw new Error(payload.message || '队列命令发送失败')
+  }
+  return payload.data as QueueControlAck
+}
+
+interface QueueStreamHandlers {
+  onSnapshot: (snapshot: QueueSnapshot) => void
+  onChanged: (snapshot: QueueSnapshot) => void
+  onConsumed: (event: UserMessageConsumedEvent) => void
+  onError?: () => void
+}
+
+export interface UserMessageConsumedEvent {
+  appId: number
+  commandId: string
+  turnId: string
+  text: string
+  mode: 'followup' | 'steer'
+  queue: QueueSnapshot
+}
+
+export const connectGenerationQueue = ({
+  baseURL,
+  appId,
+  handlers,
+}: {
+  baseURL: string
+  appId: number
+  handlers: QueueStreamHandlers
+}) => {
+  const source = new EventSource(
+    `${baseURL}/app/chat/queue/events?appId=${encodeURIComponent(String(appId))}`,
+    { withCredentials: true }
+  )
+  const parse = <T>(event: MessageEvent<string>): T => JSON.parse(event.data) as T
+  source.addEventListener('queue_snapshot', (event) => {
+    handlers.onSnapshot(parse<QueueSnapshot>(event as MessageEvent<string>))
+  })
+  source.addEventListener('queue_changed', (event) => {
+    handlers.onChanged(parse<QueueSnapshot>(event as MessageEvent<string>))
+  })
+  source.addEventListener('user_message_consumed', (event) => {
+    handlers.onConsumed(parse<UserMessageConsumedEvent>(event as MessageEvent<string>))
+  })
+  source.onerror = () => {
+    handlers.onError?.()
+  }
+  return source
+}

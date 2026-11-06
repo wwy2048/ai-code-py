@@ -151,3 +151,20 @@ class GenerationControlRequest(ApiModel):
         if self.action in {"steer", "redirect"} and not (self.message or "").strip():
             raise ValueError(f"{self.action} 必须携带 message")
         return self
+
+
+class GenerationQueueRequest(ApiModel):
+    app_id: int
+    action: Literal["enqueue", "steer", "delete", "resume", "clear_paused"]
+    command_id: str = Field(min_length=1, max_length=64)
+    item_id: str | None = Field(default=None, max_length=64)
+    message: str | None = Field(default=None, max_length=10000)
+    clear_paused: bool = False
+
+    @model_validator(mode="after")
+    def require_fields_for_action(self) -> "GenerationQueueRequest":
+        if self.action == "enqueue" and not (self.message or "").strip():
+            raise ValueError("enqueue 必须携带 message")
+        if self.action in {"steer", "delete"} and not self.item_id:
+            raise ValueError(f"{self.action} 必须携带 itemId")
+        return self
