@@ -8,6 +8,10 @@ import BasicLayout from '@/layouts/BasicLayout.vue'
 
 <style>
 /* 全局样式优化 */
+:root {
+  --app-header-height: 64px;
+}
+
 * {
   box-sizing: border-box;
 }

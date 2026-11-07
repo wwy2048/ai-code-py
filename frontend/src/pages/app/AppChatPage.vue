@@ -48,7 +48,12 @@
       <!-- 左侧对话区域 -->
       <div class="chat-section">
         <!-- 消息区域 -->
-        <div class="messages-container" ref="messagesContainer" @scroll="handleHistoryScroll">
+        <div
+          class="messages-container"
+          :class="{ 'messages-container--initializing': !historyReady }"
+          ref="messagesContainer"
+          @scroll="handleHistoryScroll"
+        >
           <!-- 加载更多按钮 -->
           <div v-if="hasMoreHistory" class="load-more-container">
             <a-button
@@ -423,6 +428,7 @@ const consumedCommandIds = new Set<string>()
 const queueVersion = ref(0)
 let queueEventSource: EventSource | null = null
 const messagesContainer = ref<HTMLElement>()
+const historyReady = ref(false)
 const hasInitialConversation = ref(false) // 标记是否已经进行过初始对话
 const hasVisibleQueue = computed(() => queuedItems.value.length > 0 || pausedItems.value.length > 0)
 
@@ -516,6 +522,36 @@ const toChatBlocks = (parts: API.ChatTurnPart[] | undefined): ChatBlock[] => {
       ? [{ type: 'tool_group', groupId: part.groupId, tools, running: false }]
       : []
   })
+}
+
+const waitAnimationFrame = () =>
+  new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()))
+
+// 首次加载时等待内容高度稳定，再无动画定位到底部。
+const scrollHistoryToBottom = async () => {
+  const container = messagesContainer.value
+  if (!container) return
+
+  const previousBehavior = container.style.scrollBehavior
+  container.style.scrollBehavior = 'auto'
+  let previousHeight = -1
+  let stableFrames = 0
+
+  for (let frame = 0; frame < 12; frame += 1) {
+    container.scrollTop = container.scrollHeight
+    await waitAnimationFrame()
+    const currentHeight = container.scrollHeight
+    if (currentHeight === previousHeight) {
+      stableFrames += 1
+      if (stableFrames >= 2) break
+    } else {
+      previousHeight = currentHeight
+      stableFrames = 0
+    }
+  }
+
+  container.scrollTop = container.scrollHeight
+  container.style.scrollBehavior = previousBehavior
 }
 
 // 获取对话历史
@@ -630,7 +666,7 @@ const fetchChatHistory = async () => {
       } else if (container) {
         // 首次加载历史消息时默认定位到最新消息。
         await nextTick()
-        scrollToBottom()
+        await scrollHistoryToBottom()
       }
 
       // 如果没有更多历史消息，更新标志
@@ -643,6 +679,7 @@ const fetchChatHistory = async () => {
     message.error('获取对话历史失败')
   } finally {
     loadingHistory.value = false
+    historyReady.value = true
   }
 }
 
@@ -1422,7 +1459,8 @@ onUnmounted(() => {
 
 <style scoped>
 #appChatPage {
-  height: 100vh;
+  height: calc(100vh - var(--app-header-height, 64px));
+  height: calc(100dvh - var(--app-header-height, 64px));
   display: flex;
   flex-direction: column;
   padding: 12px 16px 16px;
@@ -1482,6 +1520,10 @@ onUnmounted(() => {
   padding: 24px 20px;
   overflow-y: auto;
   scroll-behavior: smooth;
+}
+
+.messages-container--initializing {
+  visibility: hidden;
 }
 
 .message-item {

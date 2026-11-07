@@ -137,6 +137,8 @@ const doLogout = async () => {
   top: 0;
   z-index: 1000;
   width: 100%;
+  height: var(--app-header-height, 64px);
+  line-height: var(--app-header-height, 64px);
   background: rgba(255, 255, 255, 0.96);
   padding: 0 24px;
   box-shadow: 0 1px 0 rgba(28, 28, 25, 0.08);
