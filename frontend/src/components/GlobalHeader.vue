@@ -2,7 +2,7 @@
   <a-layout-header class="header">
     <a-row :wrap="false">
       <!-- 左侧：Logo和标题 -->
-      <a-col flex="200px">
+      <a-col flex="200px" class="header-brand-col">
         <RouterLink to="/">
           <div class="header-left">
             <img class="logo" src="@/assets/logo.png" alt="Logo" />
@@ -11,7 +11,7 @@
         </RouterLink>
       </a-col>
       <!-- 中间：导航菜单 -->
-      <a-col flex="auto">
+      <a-col flex="auto" class="header-menu-col">
         <a-menu
           v-model:selectedKeys="selectedKeys"
           mode="horizontal"
@@ -20,13 +20,13 @@
         />
       </a-col>
       <!-- 右侧：用户操作区域 -->
-      <a-col>
+      <a-col class="header-user-col">
         <div class="user-login-status">
           <div v-if="loginUserStore.loginUser.id">
             <a-dropdown>
               <a-space>
                 <a-avatar :src="loginUserStore.loginUser.userAvatar" />
-                {{ loginUserStore.loginUser.userName ?? '无名' }}
+                <span class="user-name">{{ loginUserStore.loginUser.userName ?? '无名' }}</span>
               </a-space>
               <template #overlay>
                 <a-menu>
@@ -48,7 +48,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, h, ref } from 'vue'
+import { computed, h, onMounted, onUnmounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { type MenuProps, message } from 'ant-design-vue'
 import { useLoginUserStore } from '@/stores/loginUser.ts'
@@ -57,6 +57,16 @@ import { LogoutOutlined, HomeOutlined } from '@ant-design/icons-vue'
 
 const loginUserStore = useLoginUserStore()
 const router = useRouter()
+const narrowMediaQuery = window.matchMedia('(max-width: 768px)')
+const isNarrow = ref(narrowMediaQuery.matches)
+
+const handleNarrowChange = (event: MediaQueryListEvent) => {
+  isNarrow.value = event.matches
+}
+
+onMounted(() => narrowMediaQuery.addEventListener('change', handleNarrowChange))
+onUnmounted(() => narrowMediaQuery.removeEventListener('change', handleNarrowChange))
+
 // 当前选中菜单
 const selectedKeys = ref<string[]>(['/'])
 // 监听路由变化，更新当前选中菜单
@@ -92,6 +102,9 @@ const originItems = [
 // 过滤菜单项
 const filterMenus = (menus = [] as MenuProps['items']) => {
   return menus?.filter((menu) => {
+    // 窄屏只保留品牌和用户区域，不展示任何导航菜单。
+    if (isNarrow.value) return false
+
     const menuKey = menu?.key as string
     if (menuKey?.startsWith('/admin')) {
       const loginUser = loginUserStore.loginUser
@@ -145,6 +158,19 @@ const doLogout = async () => {
   backdrop-filter: blur(10px);
 }
 
+.header-brand-col {
+  flex: 0 0 200px;
+  max-width: 200px;
+}
+
+.header-menu-col {
+  min-width: 0;
+}
+
+.header-user-col {
+  flex: 0 0 auto;
+}
+
 .header-left {
   display: flex;
   align-items: center;
@@ -162,7 +188,66 @@ const doLogout = async () => {
   color: #1890ff;
 }
 
+.user-login-status {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  white-space: nowrap;
+}
+
+.user-login-status :deep(.ant-space) {
+  flex-wrap: nowrap;
+  white-space: nowrap;
+}
+
 .ant-menu-horizontal {
   border-bottom: none !important;
+}
+
+@media (max-width: 768px) {
+  .header {
+    padding: 0 12px;
+  }
+
+  .header-brand-col {
+    flex: 0 0 auto !important;
+    max-width: none !important;
+  }
+
+  .header-menu-col {
+    flex: 1 1 auto !important;
+    min-width: 0;
+  }
+
+  .header-user-col {
+    flex: 0 0 auto !important;
+    max-width: none !important;
+  }
+
+  .header-left {
+    gap: 8px;
+  }
+
+  .logo {
+    width: 40px;
+    height: 40px;
+  }
+
+  .site-title {
+    font-size: 16px;
+    white-space: nowrap;
+  }
+
+  .user-name {
+    display: none;
+  }
+
+  .user-login-status {
+    margin-left: 8px;
+  }
+
+  .header :deep(.ant-row) {
+    align-items: center;
+  }
 }
 </style>

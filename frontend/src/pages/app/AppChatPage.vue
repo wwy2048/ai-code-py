@@ -1,5 +1,29 @@
 <template>
   <div id="appChatPage">
+    <!-- 移动端视图切换器 -->
+    <div class="mobile-view-switcher">
+      <button
+        type="button"
+        class="mobile-view-tab"
+        :class="{ active: mobileView === 'chat' }"
+        :aria-pressed="mobileView === 'chat'"
+        @click="mobileView = 'chat'"
+      >
+        <MessageOutlined />
+        <span>对话</span>
+      </button>
+      <button
+        type="button"
+        class="mobile-view-tab"
+        :class="{ active: mobileView === 'preview' }"
+        :aria-pressed="mobileView === 'preview'"
+        @click="mobileView = 'preview'"
+      >
+        <PlayCircleOutlined />
+        <span>预览</span>
+      </button>
+    </div>
+
     <!-- 顶部栏 -->
     <div class="header-bar">
       <div class="header-left">
@@ -44,7 +68,7 @@
     </div>
 
     <!-- 主要内容区域 -->
-    <div class="main-content">
+    <div class="main-content" :class="`mobile-view-${mobileView}`">
       <!-- 左侧对话区域 -->
       <div class="chat-section">
         <!-- 消息区域 -->
@@ -288,6 +312,29 @@
             @load="onIframeLoad"
           ></iframe>
         </div>
+
+        <a-button
+          class="mobile-preview-refresh"
+          shape="circle"
+          :loading="refreshingPreview"
+          :disabled="!previewUrl || isGenerating"
+          aria-label="刷新预览"
+          @click="refreshPreview"
+        >
+          <template v-if="!refreshingPreview" #icon><ReloadOutlined /></template>
+        </a-button>
+
+        <div class="mobile-preview-footer">
+          <a-button
+            class="mobile-deploy-action"
+            :loading="deploying"
+            :disabled="!isOwner"
+            @click="deployApp"
+          >
+            <template #icon><CloudUploadOutlined /></template>
+            部署
+          </a-button>
+        </div>
       </div>
     </div>
 
@@ -371,7 +418,10 @@ import {
   DownloadOutlined,
   ExportOutlined,
   InfoCircleOutlined,
+  MessageOutlined,
   PauseOutlined,
+  PlayCircleOutlined,
+  ReloadOutlined,
   SendOutlined,
 } from '@ant-design/icons-vue'
 
@@ -443,6 +493,8 @@ const loadingHistory = ref(false)
 const previewUrl = ref('')
 const previewReady = ref(false)
 const previewIframe = ref<HTMLIFrameElement>()
+const mobileView = ref<'chat' | 'preview'>('chat')
+const refreshingPreview = ref(false)
 let previewRevision = 0
 
 const {
@@ -1317,6 +1369,12 @@ const updatePreview = () => {
   }
 }
 
+const refreshPreview = () => {
+  if (!previewUrl.value || refreshingPreview.value || isGenerating.value) return
+  refreshingPreview.value = true
+  updatePreview()
+}
+
 // 滚动到底部
 const scrollToBottom = () => {
   if (messagesContainer.value) {
@@ -1416,6 +1474,7 @@ const downloadCode = async () => {
 // iframe加载完成
 const onIframeLoad = () => {
   previewReady.value = true
+  refreshingPreview.value = false
   handleVisualEditorIframeLoad()
 }
 
@@ -1466,6 +1525,12 @@ onUnmounted(() => {
   padding: 12px 16px 16px;
   background: #f6f6f4;
   color: #242422;
+}
+
+.mobile-view-switcher,
+.mobile-preview-refresh,
+.mobile-preview-footer {
+  display: none;
 }
 
 /* 顶部栏 */
@@ -1852,6 +1917,7 @@ onUnmounted(() => {
 
 /* 右侧预览区域 */
 .preview-section {
+  position: relative;
   flex: 3;
   display: flex;
   flex-direction: column;
@@ -1920,30 +1986,145 @@ onUnmounted(() => {
 }
 
 /* 响应式设计 */
-@media (max-width: 1024px) {
+@media (max-width: 1024px) and (min-width: 769px) {
   .main-content {
     flex-direction: column;
   }
 
   .chat-section,
   .preview-section {
-    flex: none;
-    height: 50vh;
+    flex: 1 1 0;
+    height: auto;
+    min-height: 0;
   }
 }
 
 @media (max-width: 768px) {
-  .header-bar {
-    padding: 12px 16px;
+  #appChatPage {
+    height: 100vh;
+    height: 100dvh;
+    padding: 0;
   }
 
-  .app-name {
+  .header-bar {
+    display: none;
+  }
+
+  .mobile-view-switcher {
+    display: flex;
+    flex-shrink: 0;
+    gap: 4px;
+    padding: calc(8px + env(safe-area-inset-top)) 12px 8px;
+    background: #f6f6f4;
+  }
+
+  .mobile-view-tab {
+    display: inline-flex;
+    flex: 1;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    height: 42px;
+    padding: 0 14px;
+    color: #8a8985;
     font-size: 16px;
+    font-weight: 500;
+    background: transparent;
+    border: none;
+    border-radius: 21px;
+    transition:
+      color 0.2s ease,
+      background 0.2s ease,
+      box-shadow 0.2s ease;
+  }
+
+  .mobile-view-tab.active {
+    color: #242422;
+    background: #fff;
+    box-shadow: 0 2px 10px rgba(28, 28, 25, 0.08);
   }
 
   .main-content {
-    padding: 8px;
-    gap: 8px;
+    flex: 1;
+    flex-direction: column;
+    gap: 0;
+    min-height: 0;
+    padding: 0;
+  }
+
+  .chat-section,
+  .preview-section {
+    flex: 1 1 0;
+    width: 100%;
+    height: auto;
+    min-height: 0;
+    border: none;
+    border-radius: 0;
+    box-shadow: none;
+  }
+
+  .main-content.mobile-view-chat .preview-section,
+  .main-content.mobile-view-preview .chat-section {
+    display: none;
+  }
+
+  .preview-header {
+    display: none;
+  }
+
+  .preview-content {
+    min-height: 0;
+  }
+
+  .mobile-preview-refresh {
+    position: absolute;
+    right: 16px;
+    bottom: calc(82px + env(safe-area-inset-bottom));
+    z-index: 3;
+    display: inline-flex;
+    width: 46px;
+    height: 46px;
+    color: #242422;
+    background: #fff;
+    border-color: #ecece8;
+    box-shadow: 0 5px 18px rgba(28, 28, 25, 0.14);
+  }
+
+  .mobile-preview-footer {
+    display: block;
+    flex-shrink: 0;
+    padding: 10px 12px calc(10px + env(safe-area-inset-bottom));
+    background: #fff;
+    border-top: 1px solid #efefec;
+  }
+
+  .mobile-deploy-action {
+    width: 100%;
+    height: 48px;
+    color: #fff;
+    font-size: 16px;
+    font-weight: 600;
+    background: #172235;
+    border-color: #172235;
+    border-radius: 24px;
+  }
+
+  .mobile-deploy-action:hover {
+    color: #fff;
+    background: #223047;
+    border-color: #223047;
+  }
+
+  .visual-edit-action {
+    display: none !important;
+  }
+
+  .input-wrapper.has-visual-edit {
+    padding-right: 56px;
+  }
+
+  .input-container {
+    padding-bottom: calc(16px + env(safe-area-inset-bottom));
   }
 
   .message-content {
@@ -1953,6 +2134,5 @@ onUnmounted(() => {
   .code-gen-type-tag {
     font-size: 12px;
   }
-
 }
 </style>

@@ -30,4 +30,11 @@ body {
 html {
   overflow-x: clip;
 }
+
+@media (max-width: 768px) {
+  /* 聊天页移动端使用自带的“对话/预览”切换器，不再占用全局 Header 高度。 */
+  .basic-layout--fullscreen > .header {
+    display: none;
+  }
+}
 </style>
