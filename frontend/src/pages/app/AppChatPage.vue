@@ -437,6 +437,7 @@ const loadingHistory = ref(false)
 const previewUrl = ref('')
 const previewReady = ref(false)
 const previewIframe = ref<HTMLIFrameElement>()
+let previewRevision = 0
 
 const {
   isEditing,
@@ -626,6 +627,10 @@ const fetchChatHistory = async () => {
       if (preserveScroll && container) {
         await nextTick()
         container.scrollTop = container.scrollHeight - previousScrollHeight + previousScrollTop
+      } else if (container) {
+        // 首次加载历史消息时默认定位到最新消息。
+        await nextTick()
+        scrollToBottom()
       }
 
       // 如果没有更多历史消息，更新标志
@@ -1178,7 +1183,7 @@ const generateCode = async (
           activeTurnId.value = undefined
         }
         if (data.status === 'completed') {
-          setTimeout(() => updatePreview(), 500)
+          updatePreview()
         } else if (data.status === 'interrupted') {
           message.warning('生成已中断')
         } else {
@@ -1268,7 +1273,8 @@ const handleError = (error: unknown, aiMessageIndex: number) => {
 const updatePreview = () => {
   if (appId.value) {
     const codeGenType = appInfo.value?.codeGenType || CodeGenTypeEnum.HTML
-    const newPreviewUrl = getStaticPreviewUrl(codeGenType, appId.value)
+    previewRevision += 1
+    const newPreviewUrl = getStaticPreviewUrl(codeGenType, appId.value, previewRevision)
     previewUrl.value = newPreviewUrl
     previewReady.value = true
   }

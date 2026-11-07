@@ -20,12 +20,20 @@ export const getDeployUrl = (deployKey: string) => {
 }
 
 // 获取静态资源预览URL
-export const getStaticPreviewUrl = (codeGenType: string, appId: string) => {
+export const getStaticPreviewUrl = (
+  codeGenType: string,
+  appId: string,
+  previewRevision?: number,
+) => {
   const baseUrl = `${STATIC_BASE_URL}/${codeGenType}_${appId}/`
   // 如果是 Vue 项目，浏览地址需要添加 dist 后缀
-  if (codeGenType === CodeGenTypeEnum.VUE_PROJECT) {
-    return `${baseUrl}dist/index.html`
-  }
-  return baseUrl
+  const url = codeGenType === CodeGenTypeEnum.VUE_PROJECT
+    ? `${baseUrl}dist/index.html`
+    : baseUrl
+
+  // 生成完成后改变 URL，避免 iframe 直接复用旧页面缓存。
+  if (previewRevision === undefined) return url
+  const separator = url.includes('?') ? '&' : '?'
+  return `${url}${separator}__preview=${encodeURIComponent(String(previewRevision))}`
 }
 

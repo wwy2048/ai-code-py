@@ -60,7 +60,7 @@ const router = useRouter()
 // 当前选中菜单
 const selectedKeys = ref<string[]>(['/'])
 // 监听路由变化，更新当前选中菜单
-router.afterEach((to, from, next) => {
+router.afterEach((to) => {
   selectedKeys.value = [to.path]
 })
 
@@ -133,8 +133,14 @@ const doLogout = async () => {
 
 <style scoped>
 .header {
-  background: #fff;
+  position: sticky;
+  top: 0;
+  z-index: 1000;
+  width: 100%;
+  background: rgba(255, 255, 255, 0.96);
   padding: 0 24px;
+  box-shadow: 0 1px 0 rgba(28, 28, 25, 0.08);
+  backdrop-filter: blur(10px);
 }
 
 .header-left {

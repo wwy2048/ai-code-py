@@ -1,13 +1,14 @@
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker
 from starlette.exceptions import HTTPException as StarletteHTTPException
+from starlette.responses import Response
 from starlette.staticfiles import StaticFiles
 
 from app.api.app import router as app_router
@@ -60,6 +61,19 @@ def create_app(
         await app.state.engine.dispose()
 
     app = FastAPI(title="CluckAI API", lifespan=lifespan)
+
+    @app.middleware("http")
+    async def disable_static_preview_cache(
+        request: Request,
+        call_next: Callable[[Request], Awaitable[Response]],
+    ) -> Response:
+        """预览产物每次重新加载都必须回源，避免 iframe 复用旧 HTML/CSS/JS。"""
+        response = await call_next(request)
+        if request.url.path.startswith(f"{app_settings.api_prefix}/static/"):
+            response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+            response.headers["Pragma"] = "no-cache"
+            response.headers["Expires"] = "0"
+        return response
     app.state.settings = app_settings
     app.state.engine = app_engine
     app.state.redis = app_redis
