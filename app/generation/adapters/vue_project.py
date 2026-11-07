@@ -17,6 +17,7 @@ _FIXED = (
     "package.json",
     "package-lock.json",
     "vite.config.js",
+    "vite-source-locator.js",
     "index.html",
     "src/main.js",
     "src/router/index.js",

@@ -106,6 +106,8 @@ def test_vue_template_prepares_router_and_preserves_generated_files(tmp_path: Pa
     template = VueProjectTemplate()
     template.prepare(tmp_path)
     assert (tmp_path / "package-lock.json").is_file()
+    assert (tmp_path / "vite-source-locator.js").is_file()
+    assert "vueSourceLocator" in (tmp_path / "vite.config.js").read_text(encoding="utf-8")
     assert (tmp_path / "src" / "router" / "index.js").is_file()
     assert (tmp_path / "src" / "views" / "HomeView.vue").is_file()
 

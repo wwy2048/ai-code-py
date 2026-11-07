@@ -63,7 +63,20 @@
 
           <div v-for="(message, index) in messages" :key="message.commandId || message.id || index" class="message-item">
             <div v-if="message.type === 'user'" class="user-message">
-              <div class="message-content">{{ message.content }}</div>
+              <div class="message-content">
+                <div v-if="getUserMessageView(message).element" class="visual-prompt-content">
+                  <div>请对以下选中元素进行修改：</div>
+                  <div>修改需求：{{ getUserMessageView(message).request }}</div>
+                  <div
+                    class="visual-element-chip"
+                    :title="getUserMessageView(message).element?.selector"
+                  >
+                    <AimOutlined />
+                    <code>{{ formatVisualElementLabel(getUserMessageView(message).element) }}</code>
+                  </div>
+                </div>
+                <template v-else>{{ message.content }}</template>
+              </div>
               <div class="message-avatar">
                 <a-avatar :src="loginUserStore.loginUser.userAvatar" />
               </div>
@@ -116,8 +129,8 @@
             >
               <div class="queue-row-content">
                 <span class="queue-row-icon">↳</span>
-                <a-tooltip :title="item.message" placement="topLeft">
-                  <span class="queue-row-text">{{ item.message }}</span>
+                <a-tooltip :title="getQueueDisplayMessage(item.message)" placement="topLeft">
+                  <span class="queue-row-text">{{ getQueueDisplayMessage(item.message) }}</span>
                 </a-tooltip>
               </div>
               <div class="queue-row-actions">
@@ -150,8 +163,8 @@
               >
                 <div class="queue-row-content">
                   <span class="queue-row-icon">↳</span>
-                  <a-tooltip :title="item.message" placement="topLeft">
-                    <span class="queue-row-text">{{ item.message }}</span>
+                  <a-tooltip :title="getQueueDisplayMessage(item.message)" placement="topLeft">
+                    <span class="queue-row-text">{{ getQueueDisplayMessage(item.message) }}</span>
                   </a-tooltip>
                 </div>
                 <div class="queue-row-actions">
@@ -173,7 +186,18 @@
             </div>
           </div>
 
-          <div class="input-wrapper">
+          <a-alert
+            v-if="selectedElement"
+            class="visual-selection-alert"
+            type="info"
+            show-icon
+            closable
+            :message="`已选中 ${formatVisualElementLabel(selectedElement)}`"
+            :description="getSelectedElementDescription(selectedElement)"
+            @close="clearSelectedElement"
+          />
+
+          <div class="input-wrapper" :class="{ 'has-visual-edit': isOwner }">
             <a-tooltip v-if="!isOwner" title="无法在别人的作品下对话哦~" placement="top">
               <a-textarea
                 v-model:value="userInput"
@@ -193,6 +217,17 @@
               @keydown.enter.exact.prevent="handleComposerSend"
             />
             <div class="input-actions">
+              <a-tooltip v-if="isOwner" :title="isEditing ? '退出可视化编辑' : '在预览中选择元素'">
+                <a-button
+                  class="visual-edit-action"
+                  :class="{ active: isEditing }"
+                  :disabled="!canUseVisualEditor"
+                  @click="toggleVisualEditing"
+                >
+                  <template #icon><AimOutlined /></template>
+                  {{ isEditing ? '退出编辑' : '编辑' }}
+                </a-button>
+              </a-tooltip>
               <a-button
                 v-if="isGenerating && !userInput.trim() && isOwner"
                 class="composer-action stop-action"
@@ -240,8 +275,10 @@
           </div>
           <iframe
             v-else
+            ref="previewIframe"
             :src="previewUrl"
             class="preview-iframe"
+            title="生成网站预览"
             frameborder="0"
             @load="onIframeLoad"
           ></iframe>
@@ -307,6 +344,10 @@ import {
   type UserMessageConsumedEvent,
 } from '@/api/generationStream'
 import { CodeGenTypeEnum, formatCodeGenType } from '@/utils/codeGenTypes'
+import {
+  useVisualEditor,
+  type VisualElementInfo,
+} from '@/composables/useVisualEditor'
 import request from '@/request'
 
 import MarkdownRenderer from '@/components/MarkdownRenderer.vue'
@@ -318,6 +359,7 @@ import { API_BASE_URL, getDeployUrl, getStaticPreviewUrl } from '@/config/env'
 import { openExternalUrl } from '@/utils/openExternal'
 
 import {
+  AimOutlined,
   CaretRightOutlined,
   CloudUploadOutlined,
   DeleteOutlined,
@@ -362,6 +404,8 @@ interface Message {
   createTime?: string
   turnId?: string
   commandId?: string
+  originalContent?: string
+  visualElement?: VisualElementInfo
 }
 
 const messages = ref<Message[]>([])
@@ -392,6 +436,22 @@ const loadingHistory = ref(false)
 // 预览相关
 const previewUrl = ref('')
 const previewReady = ref(false)
+const previewIframe = ref<HTMLIFrameElement>()
+
+const {
+  isEditing,
+  selectedElement,
+  toggleEditing,
+  exitEditing,
+  handleIframeLoad: handleVisualEditorIframeLoad,
+  clearSelectedElement,
+  buildVisualPrompt,
+  parseVisualPrompt,
+  formatVisualElementLabel,
+} = useVisualEditor({
+  iframeRef: previewIframe,
+  previewUrl,
+})
 
 // 部署相关
 const deploying = ref(false)
@@ -402,6 +462,34 @@ const deployUrl = ref('')
 const isOwner = computed(() => {
   return appInfo.value?.userId === loginUserStore.loginUser.id
 })
+
+const canUseVisualEditor = computed(() => {
+  return isOwner.value && Boolean(previewUrl.value) && !isGenerating.value
+})
+
+const getUserMessageView = (item: Message) => {
+  const parsed = parseVisualPrompt(item.content)
+  return {
+    request: item.originalContent ?? parsed.request,
+    element: item.visualElement ?? parsed.element,
+  }
+}
+
+const getQueueDisplayMessage = (content: string) => {
+  return parseVisualPrompt(content).request
+}
+
+const getSelectedElementDescription = (element?: VisualElementInfo) => {
+  if (!element) return ''
+  const details = [element.selector]
+  if (element.text) details.push(`文本：${element.text}`)
+  return details.join(' · ')
+}
+
+const toggleVisualEditing = () => {
+  if (!canUseVisualEditor.value) return
+  toggleEditing()
+}
 
 const isAdmin = computed(() => {
   return loginUserStore.loginUser.userRole === 'admin'
@@ -614,8 +702,8 @@ const sendInitialMessage = async (prompt: string) => {
   await startDirectMessage(prompt)
 }
 
-const startDirectMessage = async (content: string, clearPaused = false) => {
-  if (!appId.value || sendingMessage.value) return
+const startDirectMessage = async (content: string, clearPaused = false): Promise<boolean> => {
+  if (!appId.value || sendingMessage.value) return false
   sendingMessage.value = true
   try {
     const baseURL = request.defaults.baseURL || API_BASE_URL
@@ -627,8 +715,14 @@ const startDirectMessage = async (content: string, clearPaused = false) => {
         commandId: createRequestId(),
       })
     }
+    const parsed = parseVisualPrompt(content)
     userInput.value = ''
-    messages.value.push({ type: 'user', content })
+    messages.value.push({
+      type: 'user',
+      content,
+      originalContent: parsed.request,
+      visualElement: parsed.element,
+    })
     const aiMessageIndex = messages.value.length
     messages.value.push({
       type: 'ai',
@@ -641,15 +735,17 @@ const startDirectMessage = async (content: string, clearPaused = false) => {
     isGenerating.value = true
     void generateCode(content, aiMessageIndex)
     sendingMessage.value = false
+    return true
   } catch (error) {
     console.error('发送消息失败：', error)
     message.error(error instanceof Error ? error.message : '发送消息失败')
     sendingMessage.value = false
+    return false
   }
 }
 
-const enqueueFollowup = async (content: string, clearPaused = false) => {
-  if (!appId.value || queueSending.value) return
+const enqueueFollowup = async (content: string, clearPaused = false): Promise<boolean> => {
+  if (!appId.value || queueSending.value) return false
   queueSending.value = true
   try {
     const baseURL = request.defaults.baseURL || API_BASE_URL
@@ -663,9 +759,11 @@ const enqueueFollowup = async (content: string, clearPaused = false) => {
     })
     applyQueueSnapshot(ack.queue)
     userInput.value = ''
+    return true
   } catch (error) {
     console.error('排队消息发送失败：', error)
     message.error(error instanceof Error ? error.message : '排队消息发送失败')
+    return false
   } finally {
     queueSending.value = false
   }
@@ -674,16 +772,22 @@ const enqueueFollowup = async (content: string, clearPaused = false) => {
 const handleComposerSend = async () => {
   const content = userInput.value.trim()
   if (!content || !isOwner.value || queueSending.value || sendingMessage.value) return
+
+  const prompt = selectedElement.value
+    ? buildVisualPrompt(content, selectedElement.value)
+    : content
+
   if (pausedItems.value.length > 0) {
-    pendingQueueMessage.value = content
+    pendingQueueMessage.value = prompt
     queueConflictVisible.value = true
     return
   }
-  if (isGenerating.value) {
-    await enqueueFollowup(content)
-  } else {
-    await startDirectMessage(content)
-  }
+
+  const sent = isGenerating.value
+    ? await enqueueFollowup(prompt)
+    : await startDirectMessage(prompt)
+
+  if (sent) exitEditing()
 }
 
 const cancelQueueConflict = () => {
@@ -696,11 +800,12 @@ const resolveQueueConflict = async (clearPaused: boolean) => {
   queueConflictVisible.value = false
   pendingQueueMessage.value = ''
   if (!content) return
-  if (isGenerating.value) {
-    await enqueueFollowup(content, clearPaused)
-  } else {
-    await startDirectMessage(content, clearPaused)
-  }
+
+  const sent = isGenerating.value
+    ? await enqueueFollowup(content, clearPaused)
+    : await startDirectMessage(content, clearPaused)
+
+  if (sent) exitEditing()
 }
 
 const applyQueueSnapshot = (snapshot: QueueSnapshot) => {
@@ -717,9 +822,12 @@ const appendConsumedUserMessage = (event: UserMessageConsumedEvent) => {
     return false
   }
   consumedCommandIds.add(event.commandId)
+  const parsed = parseVisualPrompt(event.text)
   messages.value.push({
     type: 'user',
     content: event.text,
+    originalContent: parsed.request,
+    visualElement: parsed.element,
     turnId: event.turnId,
     commandId: event.commandId,
   })
@@ -1265,6 +1373,7 @@ const downloadCode = async () => {
 // iframe加载完成
 const onIframeLoad = () => {
   previewReady.value = true
+  handleVisualEditorIframeLoad()
 }
 
 // 编辑应用
@@ -1399,6 +1508,37 @@ onUnmounted(() => {
   background: #f0f0ed;
   color: #242422;
   border: 1px solid #e7e7e3;
+}
+
+.visual-prompt-content {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.visual-element-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  width: fit-content;
+  max-width: 100%;
+  min-width: 0;
+  padding: 8px 13px;
+  color: #62626b;
+  background: #fff;
+  border: 1px solid #dedee3;
+  border-radius: 12px;
+  box-shadow: 0 2px 7px rgba(28, 28, 25, 0.06);
+}
+
+.visual-element-chip code {
+  min-width: 0;
+  overflow: hidden;
+  color: #55555d;
+  font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', monospace;
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .ai-message .message-content {
@@ -1559,6 +1699,15 @@ onUnmounted(() => {
   box-shadow: 0 4px 16px rgba(28, 28, 25, 0.04);
 }
 
+.input-wrapper.has-visual-edit {
+  padding-right: 164px;
+}
+
+.visual-selection-alert {
+  margin-bottom: 10px;
+  border-radius: 14px;
+}
+
 .input-wrapper :deep(.ant-input) {
   min-height: 42px;
   padding: 0;
@@ -1579,6 +1728,36 @@ onUnmounted(() => {
   position: absolute;
   right: 10px;
   bottom: 10px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.visual-edit-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 36px;
+  padding: 0 13px;
+  color: #30303a;
+  font-weight: 500;
+  background: #fff;
+  border-color: #e3e3df;
+  border-radius: 18px;
+  box-shadow: 0 3px 10px rgba(28, 28, 25, 0.06);
+}
+
+.visual-edit-action:hover {
+  color: #1f1f23;
+  background: #fafaf8;
+  border-color: #d7d7d1;
+}
+
+.visual-edit-action.active {
+  color: #1746b5;
+  background: #eef4ff;
+  border-color: #8fb0ff;
+  box-shadow: 0 0 0 2px rgba(47, 107, 255, 0.1);
 }
 
 .composer-action {
