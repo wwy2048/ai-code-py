@@ -93,6 +93,11 @@ const originItems = [
     title: '应用管理',
   },
   {
+    key: '/admin/consumptionManage',
+    label: '消费管理',
+    title: '消费管理',
+  },
+  {
     key: '/admin/chatHistoryManage',
     label: '对话管理',
     title: '对话管理',

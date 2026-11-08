@@ -101,8 +101,9 @@ async def test_anthropic_route_model_uses_strict_json_without_tools() -> None:
     assert result == CodeGenType.VUE_PROJECT
     assert client.messages.request is not None
     assert "tools" not in client.messages.request
-    assert client.messages.request["max_tokens"] == 64
+    assert client.messages.request["max_tokens"] >= 512
     assert client.messages.request["temperature"] == 0
+    assert client.messages.request["thinking"] == {"type": "disabled"}
     assert '{"codeGenType":"html"}' in client.messages.request["system"]
     await router.aclose()
 

@@ -14,6 +14,7 @@ from starlette.staticfiles import StaticFiles
 from app.api.app import router as app_router
 from app.api.chat_history import router as chat_history_router
 from app.api.health import router as health_router
+from app.api.model_call import router as model_call_router
 from app.api.user import router as user_router
 from app.app_assets import CosCoverCleaner, LocalAppAssetCleaner
 from app.codegen_router import CodeGenTypeRouter, create_code_gen_type_router
@@ -159,6 +160,7 @@ def create_app(
     app.include_router(user_router, prefix=app_settings.api_prefix)
     app.include_router(app_router, prefix=app_settings.api_prefix)
     app.include_router(chat_history_router, prefix=app_settings.api_prefix)
+    app.include_router(model_call_router, prefix=app_settings.api_prefix)
     return app
 
 

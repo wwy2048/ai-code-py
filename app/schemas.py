@@ -119,6 +119,13 @@ class ChatHistoryQueryRequest(ApiModel):
     end_time: datetime | None = None
 
 
+class ModelCallConsumptionQueryRequest(ApiModel):
+    page_num: int = Field(default=1, ge=1)
+    page_size: int = Field(default=10, ge=1, le=20)
+    user_id: int | None = Field(default=None, gt=0)
+    app_id: int | None = Field(default=None, gt=0)
+
+
 class AppVO(ApiModel):
     id: int
     app_name: str | None

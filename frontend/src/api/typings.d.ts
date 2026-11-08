@@ -220,6 +220,51 @@ declare namespace API {
     createTime?: string
   }
 
+  type ModelCallConsumptionQueryRequest = {
+    pageNum?: number
+    pageSize?: number
+    userId?: number
+    appId?: number
+  }
+
+  type ModelCallConsumptionSummary = {
+    totalCalls?: number
+    totalInputTokens?: number
+    totalCachedInputTokens?: number
+    totalOutputTokens?: number
+    totalCostCny?: number
+  }
+
+  type ModelCallConsumptionVO = {
+    userId?: number
+    appId?: number
+    userAccount?: string
+    userName?: string
+    appName?: string
+    callCount?: number
+    inputTokens?: number
+    cachedInputTokens?: number
+    outputTokens?: number
+    costCny?: number
+    lastCallTime?: string
+  }
+
+  type PageModelCallConsumption = {
+    summary?: ModelCallConsumptionSummary
+    records?: ModelCallConsumptionVO[]
+    pageNumber?: number
+    pageSize?: number
+    totalPage?: number
+    totalRow?: number
+    optimizeCountQuery?: boolean
+  }
+
+  type BaseResponsePageModelCallConsumption = {
+    code?: number
+    data?: PageModelCallConsumption
+    message?: string
+  }
+
   type ChatTurnDebug = {
     appId?: number
     turnId?: string
