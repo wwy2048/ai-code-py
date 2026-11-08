@@ -245,10 +245,11 @@ class AnthropicCodeGenTypeRouteModel:
         try:
             return await self._client.messages.create(
                 model=self._model,
-                max_tokens=64,
+                max_tokens=2000,
                 temperature=0,
                 system=system_prompt,
                 messages=[{"role": "user", "content": user_prompt}],
+                thinking={"type": "disabled"},
             )
         except Exception as exc:
             raise CodeGenTypeRouteModelError(
