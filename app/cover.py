@@ -65,6 +65,16 @@ class SeleniumScreenshotCapturer:
             WebDriverWait(driver, self._timeout_seconds).until(
                 lambda browser: browser.execute_script("return document.readyState") == "complete"
             )
+            actual_url = str(driver.execute_script("return location.href") or "")
+            if actual_url.startswith("chrome-error://"):
+                raise ScreenshotCaptureError("page_not_loaded")
+            WebDriverWait(driver, self._timeout_seconds).until(
+                lambda browser: bool(
+                    browser.execute_script(
+                        "return document.body && document.body.innerHTML.trim().length > 0"
+                    )
+                )
+            )
             if self._wait_after_load_seconds > 0:
                 import time
 
@@ -139,11 +149,17 @@ class CoverGenerator:
         uploader: CoverUploader,
         screenshots_root: Path,
         shutdown_timeout_seconds: float = 10.0,
+        public_url_base: str | None = None,
+        screenshot_url_base: str | None = None,
     ) -> None:
         self._session_factory = session_factory
         self._capturer = capturer
         self._uploader = uploader
         self._screenshots_root = screenshots_root.resolve()
+        self._public_url_base = public_url_base.rstrip("/") if public_url_base else None
+        self._screenshot_url_base = (
+            screenshot_url_base.rstrip("/") if screenshot_url_base else None
+        )
         self._tasks: set[asyncio.Task[bool]] = set()
         self._generations: dict[int, int] = {}
         self._closing = False
@@ -196,6 +212,7 @@ class CoverGenerator:
         generation: int | None,
         deploy_revision: int | None,
     ) -> bool:
+        url = self._capture_url(url)
         now = datetime.now()
         object_key = f"screenshots/{now:%Y/%m/%d}/{uuid.uuid4().hex}.png"
         local_path = self._screenshots_root / f"{app_id}-{uuid.uuid4().hex}.png"
@@ -246,6 +263,19 @@ class CoverGenerator:
                     app_id,
                     type(exc).__name__,
                 )
+
+    def _capture_url(self, url: str) -> str:
+        """把对外部署地址替换成服务器内部可访问的截图地址。"""
+        public_base = self._public_url_base
+        screenshot_base = self._screenshot_url_base
+        if not public_base or not screenshot_base:
+            return url
+        if url == public_base:
+            return screenshot_base
+        prefix = f"{public_base}/"
+        if url.startswith(prefix):
+            return f"{screenshot_base}/{url[len(prefix):]}"
+        return url
 
     def _task_done(self, task: asyncio.Task[bool]) -> None:
         self._tasks.discard(task)

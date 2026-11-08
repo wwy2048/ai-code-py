@@ -143,6 +143,28 @@ async def test_deploy_background_task_updates_cover_for_current_deployment(
     assert app.cover.startswith("https://cos.example.com/screenshots/")
 
 
+async def test_cover_generator_uses_internal_url_for_screenshot(app_context: AppContext) -> None:
+    app_id = await _register_login_and_create_app(app_context, account="cover-internal-url-user")
+    capturer = RecordingCapturer()
+    uploader = RecordingUploader()
+    generator = CoverGenerator(
+        app_context.session_factory,
+        capturer=capturer,
+        uploader=uploader,
+        screenshots_root=Path(app_context.app.state.settings.screenshots_root),
+        public_url_base="https://public.example.com/api/deploy",
+        screenshot_url_base="http://127.0.0.1/api/deploy",
+    )
+
+    generated = await generator.generate(
+        app_id,
+        "https://public.example.com/api/deploy/abc123/",
+    )
+
+    assert generated is True
+    assert capturer.calls[0][0] == "http://127.0.0.1/api/deploy/abc123/"
+
+
 async def test_cover_timeout_is_logged_and_does_not_update_cover(
     app_context: AppContext,
     caplog: Any,

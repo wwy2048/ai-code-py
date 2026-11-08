@@ -55,6 +55,7 @@ class Settings(BaseSettings):
     workspace_root: str = str(_PROJECT_ROOT / "tmp/codeOutput")
     deploy_root: str = str(_PROJECT_ROOT / "tmp/code_deploy")
     deploy_url_base: str = "http://localhost:8123/api/deploy"
+    cover_screenshot_url_base: str | None = None
     screenshots_root: str = str(_PROJECT_ROOT / "tmp/screenshots")
     screenshot_timeout_seconds: int = 30
     screenshot_wait_after_load_seconds: float = 1.0

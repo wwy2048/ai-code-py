@@ -7,7 +7,7 @@ from httpx import AsyncClient
 from sqlalchemy import select
 
 from app.app_assets import LocalAppAssetCleaner
-from app.codegen_router import CodeGenType, ModelBackedCodeGenTypeRouter
+from app.codegen_router import CodeGenType, CodeGenTypeRouteResult, ModelBackedCodeGenTypeRouter
 from app.models import App, ChatHistory, ModelCallLog
 
 
@@ -234,7 +234,9 @@ async def test_creating_app_requires_login(app_context: AppContext) -> None:
 
 async def test_router_failure_persists_html_fallback(app_context: AppContext) -> None:
     class FailingRouteModel:
-        async def choose_code_gen_type(self, init_prompt: str, system_prompt: str) -> str:
+        async def choose_code_gen_type(
+            self, init_prompt: str, system_prompt: str
+        ) -> CodeGenTypeRouteResult:
             raise RuntimeError("模拟路由失败")
 
     app_context.app.state.code_gen_type_router = ModelBackedCodeGenTypeRouter(FailingRouteModel())

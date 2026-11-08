@@ -92,6 +92,8 @@ def create_app(
         uploader=CosCoverUploader(app_settings),
         screenshots_root=Path(app_settings.screenshots_root),
         shutdown_timeout_seconds=app_settings.cover_shutdown_timeout_seconds,
+        public_url_base=app_settings.deploy_url_base,
+        screenshot_url_base=app_settings.cover_screenshot_url_base,
     )
     vue_browser_validator = (
         SeleniumVueBrowserValidator(
