@@ -316,7 +316,7 @@ class AgentTurnExecutor:
                 return "completed"
             if attempt == max_passes - 1:
                 raise RuntimeError(f"Vue 构建失败: {validation.output[:1000]}")
-            repair_message = policy.repair_message(validation)
+            repair_message = policy.repair_message(validation, workspace)
             state.messages.append(UserMessage(content=repair_message))
             await journal.append_internal_user(repair_message)
             await journal.commit()

@@ -10,6 +10,8 @@ class TurnJournal(Protocol):
 
     async def append_user(self, message: str) -> None: ...
 
+    async def append_internal_user(self, message: str) -> None: ...
+
     async def append_assistant(
         self, message: AssistantMessage, *, batch_id: str | None
     ) -> None: ...
@@ -47,6 +49,9 @@ class NullTurnJournal:
     """子代理等不落库场景使用的空日志实现。"""
 
     async def append_user(self, message: str) -> None:
+        return None
+
+    async def append_internal_user(self, message: str) -> None:
         return None
 
     async def append_assistant(self, message: AssistantMessage, *, batch_id: str | None) -> None:

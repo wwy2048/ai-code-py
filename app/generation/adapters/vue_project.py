@@ -33,7 +33,6 @@ _ANSI_RE = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]")
 _PLACEHOLDER_RE = re.compile(
     r"(?i)\b(?:TODO|FIXME)\b|等待生成内容|<!--\s*[A-Z][A-Z0-9_]*(?:_VIEW|_SECTION|_PLACEHOLDER)\s*-->"
 )
-_MAX_OUTPUT_CHARS = 8000
 
 
 class VueProjectTemplate:
@@ -338,11 +337,7 @@ class VueProjectBuilder:
 
     @staticmethod
     def _format_output(text: str) -> str:
-        cleaned = _ANSI_RE.sub("", text).strip()
-        if len(cleaned) <= _MAX_OUTPUT_CHARS:
-            return cleaned
-        prefix = "（已省略前部内容）\n"
-        return prefix + cleaned[-(_MAX_OUTPUT_CHARS - len(prefix)) :]
+        return _ANSI_RE.sub("", text).strip()
 
     def _activate_staging(self, root: Path, staging: Path) -> None:
         target = root / "dist"

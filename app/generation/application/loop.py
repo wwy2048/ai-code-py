@@ -27,6 +27,11 @@ from app.generation.ports.turn import EventEmitter
 
 INTERRUPTION_PLACEHOLDER = "[本轮已被用户中断，不再基于不完整的内容作答]"
 SKIPPED_TOOL_OUTPUT = "工具调用因用户中断而未执行。"
+TRUNCATED_OUTPUT_CONTINUATION = (
+    "[系统续写指令] 上一次模型输出因 max_tokens 被截断。不要重复已经输出的内容；"
+    "如果代码尚未写入，请改用最小骨架和多次较小的 write_file/edit_file 工具调用；"
+    "如果写入已经完成，请直接简洁总结当前结果并结束。"
+)
 FINALIZATION_FALLBACK_TEXT = (
     "本轮已达到工具调用上限，系统已停止继续修改。当前结果已保留，请检查预览；"
     "如需继续调整，请发送下一条指令。"
@@ -212,16 +217,21 @@ class AgentLoop:
                 await self._emit("text_delta", {"text": reply.text, "batchId": batch_id})
 
             if reply.stop_reason == "max_tokens":
-                if not reply.tool_calls:
-                    raise RuntimeError("模型输出达到 token 上限，请缩短需求或拆分为多个回合")
-                await self._reject_truncated_tools(
-                    state,
-                    reply.tool_calls,
-                    batch_id=batch_id,
-                    round_index=round_index,
-                    assistant_text=reply.text,
-                )
-                continue
+                if reply.tool_calls:
+                    await self._reject_truncated_tools(
+                        state,
+                        reply.tool_calls,
+                        batch_id=batch_id,
+                        round_index=round_index,
+                        assistant_text=reply.text,
+                    )
+                    continue
+                if round_offset < self._max_rounds - 1:
+                    await self._continue_truncated_output(
+                        state,
+                        assistant_text=round_text,
+                    )
+                    continue
 
             if not reply.tool_calls:
                 if self._control.has_steering() and round_offset < self._max_rounds - 1:
@@ -320,9 +330,7 @@ class AgentLoop:
                 error_summary="用户中断最终收口",
             )
             await self._journal.commit()
-            if await self._apply_pending_control(
-                state, batch_id=batch_id, round_index=round_index
-            ):
+            if await self._apply_pending_control(state, batch_id=batch_id, round_index=round_index):
                 return PhaseResult(exhausted=False, interrupted=True)
             raise
         except Exception as exc:
@@ -395,6 +403,20 @@ class AgentLoop:
         await self._journal.commit()
         self._control.close()
         return PhaseResult(exhausted=False, final_text=final_text)
+
+    async def _continue_truncated_output(
+        self,
+        state: TurnState,
+        *,
+        assistant_text: str,
+    ) -> None:
+        """保留截断文本，并用隐藏提示要求模型拆分剩余输出后继续。"""
+        state.messages.append(
+            AssistantMessage(content=assistant_text or "[上一轮输出因 max_tokens 截断]")
+        )
+        state.messages.append(UserMessage(content=TRUNCATED_OUTPUT_CONTINUATION))
+        await self._journal.append_internal_user(TRUNCATED_OUTPUT_CONTINUATION)
+        await self._journal.commit()
 
     async def _drain_steering(
         self,

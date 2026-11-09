@@ -422,6 +422,43 @@ class TruncatedToolCallModel:
         return ModelReply(text="已按小片段完成写入。")
 
 
+class TruncatedTextModel:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def next_turn(
+        self,
+        request: ModelRequest,
+        on_text: TextEmitter,
+    ) -> ModelReply:
+        self.calls += 1
+        if self.calls == 1:
+            text = "我将一次性输出完整页面。"
+            await on_text(text)
+            return ModelReply(
+                text=text,
+                output_tokens=8000,
+                stop_reason="max_tokens",
+            )
+        if self.calls == 2:
+            continuation = next(
+                message
+                for message in reversed(request.messages)
+                if isinstance(message, UserMessage) and "[系统续写指令]" in message.content
+            )
+            assert "max_tokens" in continuation.content
+            return ModelReply(
+                tool_calls=[
+                    ToolCall(
+                        id="continued-write",
+                        name="write_file",
+                        arguments={"path": "index.html", "content": "<h1>continued</h1>"},
+                    )
+                ]
+            )
+        return ModelReply(text="已恢复并完成页面。")
+
+
 class DeltaStreamingModel:
     async def next_turn(
         self,
@@ -701,6 +738,42 @@ async def test_truncated_tool_call_is_fed_back_without_executing_partial_argumen
     assert "max_tokens" in failed["data"]["preview"]
     workspace = Path(app_context.app.state.settings.workspace_root) / f"html_{app_id}"
     assert (workspace / "index.html").read_text(encoding="utf-8") == "<h1>chunked</h1>"
+
+
+async def test_truncated_text_output_is_continued_and_recovers(
+    app_context: AppContext,
+) -> None:
+    user_id, app_id = await _register_login_and_create_app(app_context)
+    model = TruncatedTextModel()
+    app_context.app.state.generation_runtime = GenerationRuntime(
+        AgentTurnExecutor(
+            app_context.session_factory,
+            Path(app_context.app.state.settings.workspace_root),
+            lambda _: model,
+        )
+    )
+
+    response = await app_context.client.post(
+        "/api/app/chat/gen/code",
+        json={"appId": app_id, "message": "生成大页面", "requestId": "turn-truncated-text"},
+    )
+    events = _parse_sse(response.text)
+
+    assert model.calls == 3
+    assert events[-1]["event"] == "turn_finished"
+    assert events[-1]["data"]["status"] == "completed"
+    assert not any(event["event"] == "error" for event in events)
+    workspace = Path(app_context.app.state.settings.workspace_root) / f"html_{app_id}"
+    assert (workspace / "index.html").read_text(encoding="utf-8") == "<h1>continued</h1>"
+    async with app_context.session_factory() as session:
+        continuation = await session.scalar(
+            select(ChatHistory).where(
+                ChatHistory.app_id == app_id,
+                ChatHistory.visible.is_(False),
+                ChatHistory.message.contains("[系统续写指令]"),
+            )
+        )
+    assert continuation is not None
 
 
 async def test_tool_argument_error_is_returned_to_model_and_recovered(
@@ -988,7 +1061,6 @@ async def test_vue_build_failure_is_fed_back_for_repair(app_context: AppContext)
             )
         ).all()
     assert all("构建失败" not in row.message for row in visible_users)
-
 
 
 class AlwaysFailingVueBuilder(VueProjectBuilder):

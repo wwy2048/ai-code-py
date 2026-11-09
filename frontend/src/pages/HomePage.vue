@@ -1,11 +1,11 @@
 <script setup lang="ts">
-import { ref, reactive, onMounted } from 'vue'
-import { useRouter } from 'vue-router'
-import { message } from 'ant-design-vue'
-import { useLoginUserStore } from '@/stores/loginUser'
-import { addApp, listMyAppVoByPage, listGoodAppVoByPage } from '@/api/appController'
-import { getDeployUrl } from '@/config/env'
-import { openExternalUrl } from '@/utils/openExternal'
+import {ref, reactive, onMounted} from 'vue'
+import {useRouter} from 'vue-router'
+import {message} from 'ant-design-vue'
+import {useLoginUserStore} from '@/stores/loginUser'
+import {addApp, listMyAppVoByPage, listGoodAppVoByPage} from '@/api/appController'
+import {getDeployUrl} from '@/config/env'
+import {openExternalUrl} from '@/utils/openExternal'
 import AppCard from '@/components/AppCard.vue'
 
 const router = useRouter()
@@ -139,8 +139,8 @@ onMounted(() => {
 
   // 鼠标跟随光效
   const handleMouseMove = (e: MouseEvent) => {
-    const { clientX, clientY } = e
-    const { innerWidth, innerHeight } = window
+    const {clientX, clientY} = e
+    const {innerWidth, innerHeight} = window
     const x = (clientX / innerWidth) * 100
     const y = (clientY / innerHeight) * 100
 
@@ -193,7 +193,8 @@ onMounted(() => {
               '设计一个复古波普艺术风格的电商网页，背景使用鲜艳的橙色和粉色撞色，融入漫画风格的圆点图案和手绘插图。商品展示区以波普画框形式呈现，按钮带有手写字体和跳跃动画。整体风格活泼有趣，适合潮流服饰或艺术品销售。',
             )
           "
-          >波普风电商页面</a-button
+        >波普风电商页面
+        </a-button
         >
         <a-button
           type="default"
@@ -202,7 +203,8 @@ onMounted(() => {
               '创建一个企业网站,风格要大气、商务、专业。设计一个完整的企业网站首页,包括导航栏、hero区域、服务介绍、公司优势、客户评价等部分。',
             )
           "
-          >企业官网</a-button
+        >企业官网
+        </a-button
         >
         <a-button
           type="default"
@@ -211,16 +213,18 @@ onMounted(() => {
               '设计一个现代化电商运营后台,背景为纯白,顶部导航使用渐变主题色(#4F46E5 → #2563EB)。订单处理采用卡片流设计,商品管理支持拖拽排序。数据分析区使用动态仪表盘,支持多维度筛选。整体风格简洁高效。',
             )
           "
-          >电商运营后台</a-button
+        >电商运营后台
+        </a-button
         >
         <a-button
           type="default"
           @click="
             setPrompt(
-              '参考微博的能力和布局生成一个暗黑色调的话题社区。',
+              '制作一个精美的作品展示网站，适合设计师、摄影师、艺术家等创作者。包含作品画廊、项目详情页、个人简历、联系方式等模块。采用瀑布流或网格布局展示作品，支持图片放大预览和作品分类筛选。',
             )
           "
-          >黑暗话题社区</a-button
+        >作品展示网站
+        </a-button
         >
       </div>
 
@@ -282,11 +286,10 @@ onMounted(() => {
   margin: 0;
   padding: 0;
   min-height: 100vh;
-  background:
-    linear-gradient(180deg, #f8fafc 0%, #f1f5f9 8%, #e2e8f0 20%, #cbd5e1 100%),
-    radial-gradient(circle at 20% 80%, rgba(59, 130, 246, 0.15) 0%, transparent 50%),
-    radial-gradient(circle at 80% 20%, rgba(139, 92, 246, 0.12) 0%, transparent 50%),
-    radial-gradient(circle at 40% 40%, rgba(16, 185, 129, 0.08) 0%, transparent 50%);
+  background: linear-gradient(180deg, #f8fafc 0%, #f1f5f9 8%, #e2e8f0 20%, #cbd5e1 100%),
+  radial-gradient(circle at 20% 80%, rgba(59, 130, 246, 0.15) 0%, transparent 50%),
+  radial-gradient(circle at 80% 20%, rgba(139, 92, 246, 0.12) 0%, transparent 50%),
+  radial-gradient(circle at 40% 40%, rgba(16, 185, 129, 0.08) 0%, transparent 50%);
   position: relative;
   overflow: hidden;
 }
@@ -299,16 +302,14 @@ onMounted(() => {
   left: 0;
   right: 0;
   bottom: 0;
-  background-image:
-    linear-gradient(rgba(59, 130, 246, 0.05) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(59, 130, 246, 0.05) 1px, transparent 1px),
-    linear-gradient(rgba(139, 92, 246, 0.04) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(139, 92, 246, 0.04) 1px, transparent 1px);
-  background-size:
-    100px 100px,
-    100px 100px,
-    20px 20px,
-    20px 20px;
+  background-image: linear-gradient(rgba(59, 130, 246, 0.05) 1px, transparent 1px),
+  linear-gradient(90deg, rgba(59, 130, 246, 0.05) 1px, transparent 1px),
+  linear-gradient(rgba(139, 92, 246, 0.04) 1px, transparent 1px),
+  linear-gradient(90deg, rgba(139, 92, 246, 0.04) 1px, transparent 1px);
+  background-size: 100px 100px,
+  100px 100px,
+  20px 20px,
+  20px 20px;
   pointer-events: none;
   animation: gridFloat 20s ease-in-out infinite;
 }
@@ -321,15 +322,14 @@ onMounted(() => {
   left: 0;
   right: 0;
   bottom: 0;
-  background:
-    radial-gradient(
-      600px circle at var(--mouse-x, 50%) var(--mouse-y, 50%),
-      rgba(59, 130, 246, 0.08) 0%,
-      rgba(139, 92, 246, 0.06) 40%,
-      transparent 80%
-    ),
-    linear-gradient(45deg, transparent 30%, rgba(59, 130, 246, 0.04) 50%, transparent 70%),
-    linear-gradient(-45deg, transparent 30%, rgba(139, 92, 246, 0.04) 50%, transparent 70%);
+  background: radial-gradient(
+    600px circle at var(--mouse-x, 50%) var(--mouse-y, 50%),
+    rgba(59, 130, 246, 0.08) 0%,
+    rgba(139, 92, 246, 0.06) 40%,
+    transparent 80%
+  ),
+  linear-gradient(45deg, transparent 30%, rgba(59, 130, 246, 0.04) 50%, transparent 70%),
+  linear-gradient(-45deg, transparent 30%, rgba(139, 92, 246, 0.04) 50%, transparent 70%);
   pointer-events: none;
   animation: lightPulse 8s ease-in-out infinite alternate;
 }
@@ -382,10 +382,9 @@ onMounted(() => {
   left: 0;
   right: 0;
   bottom: 0;
-  background:
-    radial-gradient(ellipse 800px 400px at center, rgba(59, 130, 246, 0.12) 0%, transparent 70%),
-    linear-gradient(45deg, transparent 30%, rgba(139, 92, 246, 0.05) 50%, transparent 70%),
-    linear-gradient(-45deg, transparent 30%, rgba(16, 185, 129, 0.04) 50%, transparent 70%);
+  background: radial-gradient(ellipse 800px 400px at center, rgba(59, 130, 246, 0.12) 0%, transparent 70%),
+  linear-gradient(45deg, transparent 30%, rgba(139, 92, 246, 0.05) 50%, transparent 70%),
+  linear-gradient(-45deg, transparent 30%, rgba(16, 185, 129, 0.04) 50%, transparent 70%);
   animation: heroGlow 10s ease-in-out infinite alternate;
 }
 

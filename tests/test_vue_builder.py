@@ -6,6 +6,7 @@ import pytest
 
 from app.generation.adapters.vue_browser import BrowserValidationResult
 from app.generation.adapters.vue_project import VueProjectBuilder
+from app.generation.adapters.workspace import Workspace
 
 
 class AcceptingBrowserValidator:
@@ -27,7 +28,7 @@ def _write_build_output(command: list[str], cwd: str | Path) -> None:
     (dist / "assets" / "index.css").write_text("body { color: red; }" * 30, encoding="utf-8")
 
 
-def test_vue_builder_uses_staging_output_browser_validation_and_tail_logs(
+def test_vue_builder_uses_staging_output_browser_validation_and_preserves_full_logs(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     builder = VueProjectBuilder(browser_validator=AcceptingBrowserValidator())
@@ -38,7 +39,11 @@ def test_vue_builder_uses_staging_output_browser_validation_and_tail_logs(
     ) -> subprocess.CompletedProcess[str]:
         if "build" in command:
             _write_build_output(command, cwd)
-        return subprocess.CompletedProcess(command, 0, "x" * 10000, "")
+        output = (
+            'Could not resolve "../views/CheckoutView.vue" from "src/router/routes.js"'
+            + "x" * 10000
+        )
+        return subprocess.CompletedProcess(command, 0, output, "")
 
     monkeypatch.setattr(subprocess, "run", success)
     result = builder.build(tmp_path)
@@ -46,9 +51,9 @@ def test_vue_builder_uses_staging_output_browser_validation_and_tail_logs(
     assert result.ok is True
     assert result.source_digest is not None
     assert result.dist_size_bytes and result.dist_size_bytes > 2
-    assert len(result.output) <= 8000
-    assert result.output.startswith("（已省略前部内容）")
-    assert "browser ok" in result.output
+    assert result.output.startswith("Could not resolve")
+    assert result.output.endswith("browser ok")
+    assert len(result.output) > 10000
     assert (tmp_path / "dist" / "index.html").is_file()
     assert not list(tmp_path.glob(".ai-code-dist-*"))
     assert builder._browser_validator is not None
@@ -158,6 +163,69 @@ async def test_vue_build_coordinator_reuses_same_source_digest(tmp_path: Path) -
 
     assert first == second
     assert builder.calls == 1
+
+
+def test_vue_repair_message_writes_long_log_for_model_to_read(tmp_path: Path) -> None:
+    from app.generation.adapters.codegen import (
+        CompletionResult,
+        VueBuildCoordinator,
+        VueCompletionPolicy,
+    )
+
+    policy = VueCompletionPolicy(VueBuildCoordinator(VueProjectBuilder()))
+    output = (
+        "> ai-code-vue-app@0.0.0 build\n"
+        "error during build:\n"
+        'Could not resolve "../views/CheckoutView.vue" from "src/router/routes.js"\n'
+        + "    at rollup stack line\n"
+        * 1000
+    )
+
+    workspace = Workspace(tmp_path)
+    message = policy.repair_message(CompletionResult(False, output), workspace)
+
+    assert "检测到缺失模块引用" in message
+    assert "src/router/routes.js" in message
+    assert "../views/CheckoutView.vue" in message
+    assert "目标文件 src/views/CheckoutView.vue" in message
+    assert len(message) < len(output)
+    assert "read_file" in message
+    assert ".ai-code-build-error.log" in message
+    log_text = workspace.read_file(".ai-code-build-error.log")
+    assert log_text == output
+
+
+async def test_vue_build_tool_persists_long_failure_log(tmp_path: Path) -> None:
+    from app.generation.adapters.codegen import build_codegen_profile
+    from app.generation.adapters.vue_project import BuildResult
+
+    output = (
+        'Could not resolve "../views/CheckoutView.vue" from "src/router/routes.js"\n'
+        + "    at rollup stack line\n" * 1000
+    )
+
+    class LongFailingBuilder:
+        def source_digest(self, root: Path) -> str:
+            return "long-failure"
+
+        def build(self, root: Path) -> BuildResult:
+            return BuildResult(False, output)
+
+    async def emit(event: str, payload: dict[str, Any]) -> None:
+        return None
+
+    profile = build_codegen_profile("vue_project", vue_builder=LongFailingBuilder())  # type: ignore[arg-type]
+    extension = profile.tools(Workspace(tmp_path), turn_id="turn-log", emit=emit)
+    handler = extension.handlers["build_project"]
+
+    with pytest.raises(ValueError) as exc_info:
+        await handler({})
+
+    message = str(exc_info.value)
+    assert ".ai-code-build-error.log" in message
+    assert "read_file" in message
+    assert len(message) < len(output)
+    assert Workspace(tmp_path).read_file(".ai-code-build-error.log") == output
 
 
 def test_vue_builder_retries_after_partial_install(
