@@ -181,6 +181,13 @@ class CoverGenerator:
         )
         self._tasks.add(task)
         task.add_done_callback(self._task_done)
+        logger.info(
+            "封面截图任务已调度 app_id=%s generation=%s deploy_revision=%s url=%s",
+            app_id,
+            generation,
+            deploy_revision,
+            url,
+        )
 
     async def wait_for_idle(self) -> None:
         pending = tuple(self._tasks)
@@ -216,13 +223,22 @@ class CoverGenerator:
         now = datetime.now()
         object_key = f"screenshots/{now:%Y/%m/%d}/{uuid.uuid4().hex}.png"
         local_path = self._screenshots_root / f"{app_id}-{uuid.uuid4().hex}.png"
+        logger.info(
+            "封面截图开始 app_id=%s generation=%s deploy_revision=%s url=%s",
+            app_id,
+            generation,
+            deploy_revision,
+            url,
+        )
         stage = "capture"
         uploaded = False
         try:
             await asyncio.to_thread(self._capturer.capture, url, local_path)
+            logger.info("页面截图完成 app_id=%s", app_id)
             stage = "upload"
             cover_url = await asyncio.to_thread(self._uploader.upload, local_path, object_key)
             uploaded = True
+            logger.info("封面截图上传完成 app_id=%s object_key=%s", app_id, object_key)
             stage = "persist"
             if generation is not None and self._generations.get(app_id) != generation:
                 logger.info("丢弃过期封面任务 app_id=%s generation=%s", app_id, generation)
@@ -239,6 +255,7 @@ class CoverGenerator:
                     logger.info("丢弃过期封面结果 app_id=%s generation=%s", app_id, generation)
                     await asyncio.to_thread(self._uploader.delete, object_key)
                     return False
+            logger.info("封面生成完成 app_id=%s cover_url=%s", app_id, cover_url)
             return True
         except Exception as exc:
             logger.exception(

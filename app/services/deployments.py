@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import secrets
 import string
 from collections.abc import Callable
@@ -18,6 +19,8 @@ from app.errors import BusinessError
 from app.models import App
 from app.response import ErrorCode
 from app.services.apps import require_owned_app
+
+logger = logging.getLogger(__name__)
 
 _DEPLOY_KEY_ALPHABET = string.ascii_lowercase + string.digits
 _DEPLOY_LOCK = asyncio.Lock()
@@ -71,13 +74,26 @@ async def _deploy_app_locked(
     key_factory: Callable[[], str],
 ) -> str:
     app = await require_owned_app(session, app_id, user_id)
+    logger.info(
+        "应用部署开始 user_id=%s app_id=%s code_gen_type=%s",
+        user_id,
+        app_id,
+        app.code_gen_type or "html",
+    )
     is_new_key = not app.deploy_key
     deploy_key = app.deploy_key or await _unique_deploy_key(session, key_factory)
     try:
         deploy_url = await asyncio.to_thread(deployer.deploy, app, deploy_key)
     except DeploymentSourceError as exc:
+        logger.warning(
+            "应用部署失败 user_id=%s app_id=%s reason=source error=%s",
+            user_id,
+            app_id,
+            exc,
+        )
         raise BusinessError(ErrorCode.NOT_FOUND, str(exc)) from exc
     except DeploymentWriteError as exc:
+        logger.exception("应用部署失败 user_id=%s app_id=%s reason=write", user_id, app_id)
         raise BusinessError(ErrorCode.SYSTEM_ERROR, str(exc)) from exc
 
     app.deploy_key = deploy_key
@@ -87,10 +103,19 @@ async def _deploy_app_locked(
     try:
         await session.commit()
     except Exception:
+        logger.exception("应用部署提交失败 user_id=%s app_id=%s", user_id, app_id)
         await session.rollback()
         if is_new_key:
             await asyncio.to_thread(deployer.remove, deploy_key)
         raise
     if cover_generator is not None:
         cover_generator.schedule(app.id, deploy_url, app.deploy_revision)
+    logger.info(
+        "应用部署成功 user_id=%s app_id=%s deploy_key=%s deploy_revision=%s deploy_url=%s",
+        user_id,
+        app_id,
+        deploy_key,
+        app.deploy_revision,
+        deploy_url,
+    )
     return deploy_url

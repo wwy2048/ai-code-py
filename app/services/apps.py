@@ -75,6 +75,12 @@ async def create_app(
     session.add(app)
     await session.commit()
     await session.refresh(app)
+    logger.info(
+        "应用创建成功 app_id=%s user_id=%s code_gen_type=%s",
+        app.id,
+        user_id,
+        code_gen_type.value,
+    )
     return app.id
 
 
@@ -94,6 +100,7 @@ async def update_app(
     app.app_name = payload.app_name.strip()
     app.edit_time = datetime.now()
     await session.commit()
+    logger.info("应用更新成功 app_id=%s user_id=%s", app.id, user_id)
 
 
 def _validated_page(query: AppQueryRequest) -> None:
@@ -189,6 +196,7 @@ async def delete_app(
 ) -> None:
     app = await require_owned_app(session, app_id, user_id)
     await _delete_app_record(session, app, cleaner)
+    logger.info("应用删除成功 app_id=%s user_id=%s", app_id, user_id)
 
 
 async def _delete_app_record(
@@ -234,6 +242,7 @@ async def update_app_by_admin(
         app.priority = payload.priority
     app.edit_time = datetime.now()
     await session.commit()
+    logger.info("管理员更新应用成功 app_id=%s", app.id)
 
 
 async def delete_app_by_admin(
@@ -245,3 +254,4 @@ async def delete_app_by_admin(
     if app is None:
         raise BusinessError(ErrorCode.NOT_FOUND, "应用不存在")
     await _delete_app_record(session, app, cleaner)
+    logger.info("管理员删除应用成功 app_id=%s", app_id)

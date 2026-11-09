@@ -36,6 +36,7 @@ from app.generation.adapters.vue_browser import SeleniumVueBrowserValidator
 from app.generation.adapters.vue_project import VueProjectBuilder
 from app.generation.application.runtime import GenerationRuntime
 from app.generation.ports.model import AgentModel
+from app.logging_config import configure_logging
 from app.services.deployments import generate_deploy_key
 
 
@@ -49,6 +50,7 @@ def create_app(
     cover_generator: CoverScheduler | None = None,
 ) -> FastAPI:
     app_settings = settings or get_settings()
+    configure_logging(app_settings.log_level)
     app_engine = engine or create_engine(app_settings.database_url)
     app_redis = redis_client or Redis.from_url(app_settings.redis_url, decode_responses=True)
 

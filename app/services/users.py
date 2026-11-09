@@ -1,3 +1,4 @@
+import logging
 from datetime import datetime
 from math import ceil
 from typing import Any
@@ -18,6 +19,8 @@ from app.schemas import (
     UserVO,
 )
 from app.security import PasswordService
+
+logger = logging.getLogger(__name__)
 
 
 def _normalize_new_account(account: str) -> str:
@@ -69,6 +72,7 @@ async def register_user(
         await session.rollback()
         raise BusinessError(ErrorCode.PARAMS_ERROR, "账号名重复") from exc
     await session.refresh(user)
+    logger.info("用户注册成功 user_id=%s account=%r", user.id, account)
     return user.id
 
 
@@ -83,10 +87,12 @@ async def login_user(
         select(User).where(User.user_account == account, User.is_delete == 0)
     )
     if user is None:
+        logger.warning("用户登录失败 account=%r reason=user_not_found", account)
         raise BusinessError(ErrorCode.PARAMS_ERROR, "用户不存在或密码错误")
 
     verification = password_service.verify(user.user_password, request.user_password)
     if not verification.valid:
+        logger.warning("用户登录失败 account=%r reason=invalid_password", account)
         raise BusinessError(ErrorCode.PARAMS_ERROR, "用户不存在或密码错误")
 
     if verification.needs_upgrade:
@@ -94,6 +100,7 @@ async def login_user(
         user.edit_time = datetime.now()
         await session.commit()
         await session.refresh(user)
+    logger.info("用户登录成功 user_id=%s account=%r", user.id, account)
     return user
 
 
@@ -176,6 +183,7 @@ async def update_user_by_admin(
         user.user_profile = payload.user_profile.strip() or None
     user.edit_time = datetime.now()
     await session.commit()
+    logger.info("管理员更新用户成功 user_id=%s", user.id)
 
 
 async def delete_user_by_admin(session: AsyncSession, user_id: int, admin_id: int) -> None:
@@ -185,3 +193,4 @@ async def delete_user_by_admin(session: AsyncSession, user_id: int, admin_id: in
     user.is_delete = 1
     user.edit_time = datetime.now()
     await session.commit()
+    logger.info("管理员删除用户成功 user_id=%s admin_id=%s", user_id, admin_id)

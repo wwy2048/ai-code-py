@@ -361,6 +361,14 @@ class GenerationRuntime:
         if not job.queued:
             agent.projection.clear_inflight(event.event_id)
         agent.activate_turn(job)
+        logger.info(
+            "生成任务开始 turn_id=%s app_id=%s user_id=%s code_gen_type=%s queued=%s",
+            request.turn_id,
+            request.app_id,
+            request.user_id,
+            request.code_gen_type,
+            job.queued,
+        )
         outcome = "failed"
         externally_cancelled = False
         user_message_committed = False
@@ -421,6 +429,12 @@ class GenerationRuntime:
                 job._subscription = None
             if not self._stopping:
                 agent.ensure_worker()
+            logger.info(
+                "生成任务结束 turn_id=%s app_id=%s outcome=%s",
+                request.turn_id,
+                request.app_id,
+                outcome,
+            )
 
     async def _emit(
         self,
