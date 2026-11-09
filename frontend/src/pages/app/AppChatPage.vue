@@ -2076,14 +2076,18 @@ onUnmounted(() => {
     min-height: 0;
   }
 
-  .mobile-preview-refresh {
+  .mobile-preview-refresh.ant-btn {
     position: absolute;
     right: 16px;
     bottom: calc(82px + env(safe-area-inset-bottom));
     z-index: 3;
     display: inline-flex;
+    align-items: center;
+    justify-content: center;
     width: 46px;
+    min-width: 46px;
     height: 46px;
+    padding: 0;
     color: #242422;
     background: #fff;
     border-color: #ecece8;
