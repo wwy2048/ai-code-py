@@ -6,8 +6,6 @@
     <a-layout-content class="main-content">
       <router-view />
     </a-layout-content>
-    <!-- 全屏页面不展示 Footer，避免出现额外的整页滚动 -->
-    <GlobalFooter v-if="!isFullscreen" />
   </a-layout>
 </template>
 
@@ -15,7 +13,6 @@
 import { computed } from 'vue'
 import { useRoute } from 'vue-router'
 import GlobalHeader from '@/components/GlobalHeader.vue'
-import GlobalFooter from '@/components/GlobalFooter.vue'
 
 const route = useRoute()
 const isFullscreen = computed(() => Boolean(route.meta.fullscreen))
