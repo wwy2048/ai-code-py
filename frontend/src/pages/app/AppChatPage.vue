@@ -758,7 +758,6 @@ const fetchAppInfo = async () => {
   }
 
   appId.value = id
-  connectQueueEvents()
 
   try {
     const res = await getAppVoById({ id: id as unknown as number })
@@ -767,10 +766,15 @@ const fetchAppInfo = async () => {
       if (appInfo.value.deployKey) {
         deployUrl.value = getDeployUrl(appInfo.value.deployKey)
       }
+      if (isOwner.value) {
+        connectQueueEvents()
+      }
 
       // 获取对话历史
       await fetchChatHistory()
-      await maybeResumeActiveTurn()
+      if (isOwner.value) {
+        await maybeResumeActiveTurn()
+      }
 
       // 检查是否有对话历史
       const hasHistory = chatHistory.value.length > 0
@@ -802,7 +806,7 @@ const sendInitialMessage = async (prompt: string) => {
 }
 
 const startDirectMessage = async (content: string, clearPaused = false): Promise<boolean> => {
-  if (!appId.value || sendingMessage.value) return false
+  if (!appId.value || sendingMessage.value || !isOwner.value) return false
   sendingMessage.value = true
   try {
     const baseURL = request.defaults.baseURL || API_BASE_URL
@@ -844,7 +848,7 @@ const startDirectMessage = async (content: string, clearPaused = false): Promise
 }
 
 const enqueueFollowup = async (content: string, clearPaused = false): Promise<boolean> => {
-  if (!appId.value || queueSending.value) return false
+  if (!appId.value || queueSending.value || !isOwner.value) return false
   queueSending.value = true
   try {
     const baseURL = request.defaults.baseURL || API_BASE_URL
@@ -928,7 +932,13 @@ const applyActiveTurn = (snapshot: ActiveTurnSnapshot | null) => {
 
 const maybeResumeActiveTurn = async () => {
   const snapshot = activeTurnSnapshot.value
-  if (!snapshot?.active || snapshot.status !== 'running' || !historyReady.value || !appId.value) {
+  if (
+    !isOwner.value ||
+    !snapshot?.active ||
+    snapshot.status !== 'running' ||
+    !historyReady.value ||
+    !appId.value
+  ) {
     return
   }
   if (!snapshot.replayableFromZero) {
@@ -1007,6 +1017,7 @@ const appendConsumedUserMessage = (event: UserMessageConsumedEvent) => {
 }
 
 const handleUserMessageConsumed = (event: UserMessageConsumedEvent) => {
+  if (!isOwner.value) return
   const isNew = appendConsumedUserMessage(event)
   if (!isNew) return
   scrollToBottom()
@@ -1031,7 +1042,7 @@ const handleUserMessageConsumed = (event: UserMessageConsumedEvent) => {
 
 const connectQueueEvents = () => {
   queueEventSource?.close()
-  if (!appId.value) return
+  if (!appId.value || !isOwner.value) return
   const baseURL = request.defaults.baseURL || API_BASE_URL
   queueEventSource = connectGenerationQueue({
     baseURL,
@@ -1401,7 +1412,7 @@ const appendControlNote = (content: string) => {
 
 const stopGeneration = async () => {
   const turnId = activeTurnId.value
-  if (!turnId || !appId.value || stopping.value) return
+  if (!turnId || !appId.value || !isOwner.value || stopping.value) return
   stopping.value = true
   try {
     const baseURL = request.defaults.baseURL || API_BASE_URL

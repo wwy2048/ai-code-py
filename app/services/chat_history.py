@@ -10,7 +10,7 @@ from app.models import ChatHistory, ModelCallLog
 from app.redaction import sanitize_sensitive_text
 from app.response import ErrorCode
 from app.schemas import ChatHistoryQueryRequest
-from app.services.apps import require_owned_app
+from app.services.apps import require_viewable_app
 
 
 def serialize_chat_history(record: ChatHistory) -> dict:
@@ -345,7 +345,7 @@ async def list_visible_history(
     last_create_time: datetime | None,
     last_id: int | None,
 ) -> dict:
-    await require_owned_app(session, app_id, user_id)
+    await require_viewable_app(session, app_id, user_id)
     if page_size < 1 or page_size > 20:
         raise BusinessError(ErrorCode.PARAMS_ERROR, "pageSize 必须在 1 到 20 之间")
 

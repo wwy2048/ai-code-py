@@ -36,7 +36,7 @@ from app.services.apps import (
     delete_app,
     delete_app_by_admin,
     get_app_by_id_for_admin,
-    get_owned_app,
+    get_viewable_app,
     list_apps,
     require_owned_app,
     update_app,
@@ -154,7 +154,7 @@ async def get_app_vo_by_id(
     session: DbSession,
     current_user: CurrentUser,
 ) -> dict:
-    app_vo = await get_owned_app(session, id, current_user.id)
+    app_vo = await get_viewable_app(session, id, current_user.id)
     return success(app_vo.model_dump(mode="json", by_alias=True))
 
 
@@ -164,7 +164,7 @@ async def get_app_detail(
     session: DbSession,
     current_user: CurrentUser,
 ) -> dict:
-    app_vo = await get_owned_app(session, app_id, current_user.id)
+    app_vo = await get_viewable_app(session, app_id, current_user.id)
     return success(app_vo.model_dump(mode="json", by_alias=True))
 
 

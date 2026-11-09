@@ -43,6 +43,17 @@ async def require_owned_app(session: AsyncSession, app_id: int, user_id: int) ->
     return app
 
 
+async def require_viewable_app(session: AsyncSession, app_id: int, user_id: int) -> App:
+    if app_id <= 0:
+        raise BusinessError(ErrorCode.PARAMS_ERROR, "应用ID不能为空")
+    app = await session.scalar(select(App).where(App.id == app_id, App.is_delete == 0))
+    if app is None:
+        raise BusinessError(ErrorCode.NOT_FOUND, "应用不存在")
+    if app.user_id != user_id and app.priority <= 90:
+        raise BusinessError(ErrorCode.NO_AUTH, "无权限查看该应用")
+    return app
+
+
 async def _user_map(session: AsyncSession, user_ids: set[int]) -> dict[int, UserVO]:
     if not user_ids:
         return {}
@@ -86,6 +97,11 @@ async def create_app(
 
 async def get_owned_app(session: AsyncSession, app_id: int, user_id: int) -> AppVO:
     app = await require_owned_app(session, app_id, user_id)
+    return await to_app_vo(session, app)
+
+
+async def get_viewable_app(session: AsyncSession, app_id: int, user_id: int) -> AppVO:
+    app = await require_viewable_app(session, app_id, user_id)
     return await to_app_vo(session, app)
 
 

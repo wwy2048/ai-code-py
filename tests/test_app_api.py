@@ -142,6 +142,65 @@ async def test_featured_apps_and_existing_workspace_are_publicly_previewable(
     assert "旧应用预览" in preview.text
 
 
+async def test_other_user_can_read_featured_app_chat_history(
+    app_context: AppContext,
+) -> None:
+    await _register_and_login(app_context.client, "featured-owner")
+    created = await app_context.client.post(
+        "/api/app/create",
+        json={"initPrompt": "创建一个公开对话案例"},
+    )
+    app_id = created.json()["data"]
+
+    async with app_context.session_factory() as session:
+        app = await session.get(App, app_id)
+        assert app is not None
+        app.priority = 99
+        session.add_all(
+            [
+                ChatHistory(
+                    message="公开的用户消息",
+                    message_type="user",
+                    message_kind="user",
+                    app_id=app_id,
+                    user_id=app.user_id,
+                    turn_id="featured-turn",
+                    sequence=1,
+                    visible=True,
+                    active=True,
+                    is_delete=0,
+                ),
+                ChatHistory(
+                    message="公开的助手回复",
+                    message_type="ai",
+                    message_kind="assistant",
+                    app_id=app_id,
+                    user_id=app.user_id,
+                    turn_id="featured-turn",
+                    sequence=2,
+                    visible=True,
+                    active=True,
+                    is_delete=0,
+                ),
+            ]
+        )
+        await session.commit()
+
+    await app_context.client.post("/api/user/logout")
+    await _register_and_login(app_context.client, "featured-viewer")
+
+    detail = await app_context.client.get("/api/app/get", params={"id": app_id})
+    assert detail.json()["code"] == 0
+    assert detail.json()["data"]["id"] == app_id
+
+    history = await app_context.client.get(f"/api/chatHistory/app/{app_id}")
+    assert history.json()["code"] == 0
+    assert [record["message"] for record in history.json()["data"]["records"]] == [
+        "公开的助手回复",
+        "公开的用户消息",
+    ]
+
+
 async def test_delete_app_removes_database_rows_and_artifacts(
     app_context: AppContext,
 ) -> None:
