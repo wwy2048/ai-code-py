@@ -35,6 +35,25 @@ _Avoid_: 全局 Agent、AppSession、worker
 **队列投影（Queue Projection）**:
 把收件箱状态与消息消费事实投影成前端可重放的队列快照和事件流；它不是队列事实本身。
 _Avoid_: 排队队列、收件箱、前端数组
+**队列流（Queue Stream）**:
+App 级控制面事件流，用于同步队列、暂停项、活动 Turn 和消息消费状态；不承载模型文本增量。
+_Avoid_: 消息流、生成流
+
+**回合流（Turn Stream）**:
+单个 Turn 的增量事件流，承载文本、工具和回合终态；每个读者维护独立游标。
+_Avoid_: 队列流、聊天流
+
+**Turn 重挂载（Turn Reattachment）**:
+浏览器刷新或连接中断后，使用活动 Turn 标识从指定事件游标重新订阅原 Turn 的行为。
+_Avoid_: 重试生成、重新生成
+
+**Turn 恢复快照（Turn Resume Snapshot）**:
+描述活动 Turn 能否重挂载的运行时快照，包含 Turn 标识、状态、首个保留事件、最新事件和从 0 重放能力。
+_Avoid_: TurnJob、历史记录
+
+**预览产物（Preview Artifact）**:
+生成后可供 iframe 展示的静态构建结果；预览只在产物可用时加载。
+_Avoid_: 预览接口、页面 HTML
 
 **流事件（Stream Event）**:
 模型文本或思考等高频增量事件；只能由邮箱型消费者接收，由消费者自行合并刷帧。

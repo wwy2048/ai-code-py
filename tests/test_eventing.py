@@ -79,6 +79,51 @@ async def test_turn_job_reports_stream_gap_when_replay_window_is_exceeded() -> N
     assert [event.id for event in events[1:]] == [3, 4]
 
 
+async def test_runtime_prunes_finished_turn_and_idle_agent() -> None:
+    class FakeExecutor:
+        async def execute(
+            self,
+            command: TurnRequest,
+            *,
+            emit: object,
+            control: object,
+        ) -> object:
+            del command, control
+            assert callable(emit)
+            await emit("user_message_committed", {"text": "prune"})
+            await emit("text_delta", {"text": "ok", "batchId": "batch-prune"})
+
+            class Result:
+                status = "completed"
+
+            return Result()
+
+    runtime = GenerationRuntime(
+        FakeExecutor(),  # type: ignore[arg-type]
+        finished_turn_ttl_seconds=0,
+        turn_receipt_limit=1,
+        agent_idle_ttl_seconds=0,
+    )
+    job = await runtime.start_turn(
+        TurnRequest(
+            app_id=2,
+            user_id=2,
+            code_gen_type="html",
+            message="prune",
+            turn_id="prune-turn",
+        )
+    )
+    async with asyncio.timeout(2):
+        async with job.condition:
+            while not job.completed:
+                await job.condition.wait()
+    await asyncio.sleep(0)
+
+    assert await runtime.get_turn_job(2, "prune-turn") is None
+    assert runtime._agents == {}
+    assert runtime._jobs == {}
+
+
 async def test_manager_text_and_lifecycle_events_share_one_sequence() -> None:
     class FakeExecutor:
         async def execute(
@@ -112,8 +157,13 @@ async def test_manager_text_and_lifecycle_events_share_one_sequence() -> None:
         async with job.condition:
             while not job.completed:
                 await job.condition.wait()
-    assert [event.id for event in job.events] == list(range(1, len(job.events) + 1))
+    assert [event.id for event in job.events] == [3]
+    assert job.events[0].event == "turn_finished"
+    assert job.last_event_id == 3
+    assert job.first_retained_id == 3
+    assert job.replayable_from_zero is False
     await manager.shutdown()
+
 
 def test_stream_event_rejects_await_handler() -> None:
     async def handler(event: OutboundEvent) -> None:
@@ -148,6 +198,7 @@ async def test_inbound_publish_routes_to_registered_sink() -> None:
     result = bus.publish(event, to=7)
     assert result.status == "accepted"
     assert received == [event]
+
 
 async def test_stream_deltas_are_coalesced_without_losing_text() -> None:
     async def source():

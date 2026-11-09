@@ -46,7 +46,10 @@ class Settings(BaseSettings):
     model_max_retries: int = 3
     agent_max_rounds_per_phase: int = 12
     agent_max_validation_repairs: int = 3
-    generation_event_buffer_limit: int = 4096
+    generation_event_buffer_limit: int = 16384
+    generation_finished_turn_ttl_seconds: int = 600
+    generation_turn_receipt_limit: int = 10
+    generation_agent_idle_ttl_seconds: int = 1800
     vue_browser_validation_enabled: bool = True
     vue_browser_validation_timeout_seconds: float = 30.0
     vue_browser_validation_wait_seconds: float = 1.0

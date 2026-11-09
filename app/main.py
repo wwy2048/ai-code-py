@@ -128,6 +128,9 @@ def create_app(
     app.state.generation_runtime = GenerationRuntime(
         turn_executor,
         event_buffer_limit=app_settings.generation_event_buffer_limit,
+        finished_turn_ttl_seconds=app_settings.generation_finished_turn_ttl_seconds,
+        turn_receipt_limit=app_settings.generation_turn_receipt_limit,
+        agent_idle_ttl_seconds=app_settings.generation_agent_idle_ttl_seconds,
     )
 
     app.add_exception_handler(BusinessError, handle_business_error)

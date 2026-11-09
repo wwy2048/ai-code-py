@@ -4,6 +4,7 @@ import asyncio
 import logging
 import uuid
 from collections.abc import AsyncIterator
+from time import monotonic
 from typing import Any
 
 from app.errors import BusinessError
@@ -43,11 +44,17 @@ class GenerationRuntime:
         self,
         executor: TurnExecutor,
         *,
-        event_buffer_limit: int = 4096,
+        event_buffer_limit: int = 16384,
+        finished_turn_ttl_seconds: int = 600,
+        turn_receipt_limit: int = 10,
+        agent_idle_ttl_seconds: int = 1800,
         bus: EventBus | None = None,
     ) -> None:
         self._executor = executor
         self._event_buffer_limit = event_buffer_limit
+        self._finished_turn_ttl_seconds = finished_turn_ttl_seconds
+        self._turn_receipt_limit = turn_receipt_limit
+        self._agent_idle_ttl_seconds = agent_idle_ttl_seconds
         self._bus = bus or EventBus()
         self._jobs: dict[tuple[int, str], TurnJob] = {}
         self._agents: dict[int, GenerationAgent] = {}
@@ -55,14 +62,13 @@ class GenerationRuntime:
         self._control_acks: dict[
             tuple[int, str], tuple[tuple[str, str, str | None], CommandAck]
         ] = {}
-        self._queue_acks: dict[
-            tuple[int, str], tuple[tuple[str, str, str], QueueAck]
-        ] = {}
+        self._queue_acks: dict[tuple[int, str], tuple[tuple[str, str, str], QueueAck]] = {}
         self._registry_lock = asyncio.Lock()
         self._stopping = False
 
     async def start_turn(self, request: TurnRequest) -> TurnJob:
         async with self._registry_lock:
+            await self._prune_expired_locked()
             key = (request.app_id, request.turn_id)
             existing = self._jobs.get(key)
             if existing is not None:
@@ -193,23 +199,17 @@ class GenerationRuntime:
                     text=operation.message or "",
                 )
                 self._bus.publish(event, to=operation.app_id)
-                ack = QueueAck(
-                    "accepted", "enqueue", operation.command_id, agent.queue_snapshot()
-                )
+                ack = QueueAck("accepted", "enqueue", operation.command_id, agent.queue_snapshot())
             elif operation.action == "steer":
                 ack = agent.promote(operation.item_id or "")
             elif operation.action == "delete":
                 ack = agent.delete(operation.item_id or "")
             elif operation.action == "resume":
                 result = agent.resume_paused()
-                ack = QueueAck(
-                    result.status, "resume", operation.command_id, result.queue
-                )
+                ack = QueueAck(result.status, "resume", operation.command_id, result.queue)
             elif operation.action == "clear_paused":
                 result = agent.clear_paused()
-                ack = QueueAck(
-                    result.status, "clear_paused", operation.command_id, result.queue
-                )
+                ack = QueueAck(result.status, "clear_paused", operation.command_id, result.queue)
             else:
                 raise BusinessError(ErrorCode.PARAMS_ERROR, "未知队列操作")
             self._queue_acks[request_key] = (fingerprint, ack)
@@ -229,9 +229,17 @@ class GenerationRuntime:
         last_event_id: int | None,
     ) -> AsyncIterator[QueueEvent]:
         async with self._registry_lock:
+            await self._prune_expired_locked()
             agent = self._agent_locked(app_id)
-        async for event in agent.projection.stream(last_event_id):
-            yield event
+            agent.stream_subscribers += 1
+            agent.touch()
+        try:
+            async for event in agent.projection.stream(last_event_id):
+                yield event
+        finally:
+            async with self._registry_lock:
+                agent.stream_subscribers = max(0, agent.stream_subscribers - 1)
+                agent.touch()
 
     @staticmethod
     def encode_sse(event: TurnEvent | QueueEvent) -> str:
@@ -279,6 +287,42 @@ class GenerationRuntime:
             job = self._create_job_locked(request, queued=True, command_id=event.event_id)
         await self._run_turn(agent, job, request, event)
 
+    async def get_turn_job(self, app_id: int, turn_id: str) -> TurnJob | None:
+        async with self._registry_lock:
+            await self._prune_expired_locked()
+            return self._jobs.get((app_id, turn_id))
+
+    async def _prune_expired_locked(self) -> None:
+        """惰性回收过期 Turn 回执和空闲 App Agent，避免内存无界增长。"""
+        now = monotonic()
+        for key, job in list(self._jobs.items()):
+            if (
+                job.completed
+                and job.finished_at is not None
+                and now - job.finished_at >= self._finished_turn_ttl_seconds
+            ):
+                self._jobs.pop(key, None)
+
+        completed_by_app: dict[int, list[tuple[float, tuple[int, str]]]] = {}
+        for key, job in self._jobs.items():
+            if job.completed and job.finished_at is not None:
+                completed_by_app.setdefault(key[0], []).append((job.finished_at, key))
+        for receipts in completed_by_app.values():
+            if len(receipts) <= self._turn_receipt_limit:
+                continue
+            receipts.sort(key=lambda item: item[0])
+            for _, key in receipts[: -self._turn_receipt_limit]:
+                self._jobs.pop(key, None)
+
+        for app_id, agent in list(self._agents.items()):
+            if agent.is_idle() and now - agent.last_active_at >= self._agent_idle_ttl_seconds:
+                await agent.stop()
+                self._bus.unregister(app_id)
+                subscription = self._subscriptions.pop(app_id, None)
+                if subscription is not None:
+                    self._bus.unsubscribe(subscription)
+                self._agents.pop(app_id, None)
+
     def _create_job_locked(
         self,
         request: TurnRequest,
@@ -314,7 +358,9 @@ class GenerationRuntime:
         request: TurnRequest,
         event: UserMessage,
     ) -> None:
-        agent.active_turn = job
+        if not job.queued:
+            agent.projection.clear_inflight(event.event_id)
+        agent.activate_turn(job)
         outcome = "failed"
         externally_cancelled = False
         user_message_committed = False
@@ -367,7 +413,8 @@ class GenerationRuntime:
 
             job.control.close()
             await job.finish(outcome)
-            agent.active_turn = None
+            job.retain_final_event_only()
+            agent.finish_turn(job, outcome)
             subscription = job._subscription
             if isinstance(subscription, Subscription):
                 self._bus.unsubscribe(subscription)

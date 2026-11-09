@@ -4,6 +4,7 @@ import asyncio
 from collections import deque
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
+from time import monotonic
 from typing import Any
 
 from app.generation.application.projection import QueueProjection
@@ -100,6 +101,8 @@ class GenerationAgent:
     paused_inbox: deque[UserMessage] = field(default_factory=deque)
     worker: asyncio.Task[None] | None = None
     active_turn: TurnJob | None = None
+    last_active_at: float = field(default_factory=monotonic)
+    stream_subscribers: int = 0
     _version: int = 0
     _wake: asyncio.Event = field(default_factory=asyncio.Event)
     _stopping: bool = False
@@ -109,6 +112,7 @@ class GenerationAgent:
 
     # -------------------------------------------------- inbound sink
     def enqueue(self, event: InboundEvent) -> InboxAck:
+        self.touch()
         if event.type is InboundEventType.USER_INTERRUPT:
             return self._enqueue_interrupt(event)
         if not isinstance(event, UserMessage):
@@ -221,6 +225,7 @@ class GenerationAgent:
             await self.runner(self, event)
 
     async def next_message(self) -> UserMessage:
+        self.touch()
         while True:
             for inbox in (
                 self.direct_inbox,
@@ -256,12 +261,45 @@ class GenerationAgent:
             self.worker = None
 
     # -------------------------------------------------- projection
+    def touch(self) -> None:
+        self.last_active_at = monotonic()
+
+    def activate_turn(self, job: TurnJob) -> None:
+        self.active_turn = job
+        self.touch()
+        self._version += 1
+        self.projection.publish_active_turn(job.resume_snapshot(status="running", active=True))
+
+    def finish_turn(self, job: TurnJob, outcome: str) -> None:
+        if self.active_turn is job:
+            self.active_turn = None
+        self.touch()
+        self._version += 1
+        self.projection.publish_active_turn(job.resume_snapshot(status=outcome, active=False))
+
+    def is_idle(self) -> bool:
+        return (
+            self.active_turn is None
+            and not self.direct_inbox
+            and not self.followup_inbox
+            and not self.steering_inbox
+            and not self.hidden_inbox
+            and not self.paused_inbox
+            and not self.projection.has_inflight
+            and self.stream_subscribers == 0
+        )
+
     def queue_snapshot(self) -> dict[str, Any]:
         return {
             "appId": self.app_id,
             "version": self._version,
             "paused": bool(self.paused_inbox),
             "activeTurnId": self.active_turn.request_id if self.active_turn is not None else None,
+            "activeTurn": (
+                self.active_turn.resume_snapshot(status="running", active=True)
+                if self.active_turn is not None
+                else None
+            ),
             "queuedItems": [self._serialize(event, "queued") for event in self.followup_inbox],
             "pausedItems": [self._serialize(event, "paused") for event in self.paused_inbox],
         }

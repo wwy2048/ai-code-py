@@ -5,6 +5,7 @@ from typing import cast
 
 from fastapi import APIRouter, Header, Query, Request
 from fastapi.responses import Response, StreamingResponse
+from sqlalchemy import select
 
 from app.app_assets import AppAssetCleaner
 from app.codegen_router import CodeGenTypeRouter
@@ -14,8 +15,10 @@ from app.download import WorkspaceArchiveError, build_workspace_zip
 from app.errors import BusinessError
 from app.generation.adapters.memory import MemoryStore
 from app.generation.application.inbox import QueueOperation
+from app.generation.application.stream import TurnEvent
 from app.generation.domain.events import STEERING, UserInterrupt, UserMessage
 from app.generation.domain.turns import TurnRequest
+from app.models import ChatHistory
 from app.response import ErrorCode, success
 from app.schemas import (
     AppAdminUpdateRequest,
@@ -252,6 +255,55 @@ async def generate_code(
 ) -> StreamingResponse:
     app = await require_owned_app(session, payload.app_id, current_user.id)
     runtime = request.app.state.generation_runtime
+    existing_job = await runtime.get_turn_job(app.id, payload.request_id)
+    if existing_job is None:
+        existing_user = await session.scalar(
+            select(ChatHistory)
+            .where(
+                ChatHistory.app_id == app.id,
+                ChatHistory.turn_id == payload.request_id,
+                ChatHistory.message_type == "user",
+                ChatHistory.is_delete == 0,
+            )
+            .order_by(ChatHistory.id.desc())
+            .limit(1)
+        )
+        if existing_user is not None:
+            if existing_user.message != payload.message:
+                raise BusinessError(ErrorCode.PARAMS_ERROR, "requestId 已用于其他消息")
+            lifecycle = await session.scalar(
+                select(ChatHistory)
+                .where(
+                    ChatHistory.app_id == app.id,
+                    ChatHistory.turn_id == payload.request_id,
+                    ChatHistory.message_kind == "turn_lifecycle",
+                    ChatHistory.is_delete == 0,
+                )
+                .order_by(ChatHistory.sequence.desc(), ChatHistory.id.desc())
+                .limit(1)
+            )
+            outcome = "interrupted"
+            if lifecycle is not None and lifecycle.message == "finished":
+                outcome = str((lifecycle.payload or {}).get("outcome") or "completed")
+
+            async def replay_finished_turn() -> AsyncIterator[str]:
+                yield runtime.encode_sse(
+                    TurnEvent(
+                        id=0,
+                        event="turn_finished",
+                        data={
+                            "turnId": payload.request_id,
+                            "sequence": 0,
+                            "status": outcome,
+                        },
+                    )
+                )
+
+            return StreamingResponse(
+                replay_finished_turn(),
+                media_type="text/event-stream",
+                headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+            )
     job = await runtime.start_turn(
         TurnRequest(
             app_id=app.id,

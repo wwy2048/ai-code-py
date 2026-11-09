@@ -107,6 +107,59 @@ async def _collect_queue_events(
     return events
 
 
+async def test_queue_stream_tracks_active_turn_start_and_finish(
+    app_context: AppContext,
+) -> None:
+    _, app_id = await _prepare_app(app_context, "active-turn-state-user")
+    model = QueueModel()
+    _install_model(app_context, model)
+    runtime = app_context.app.state.generation_runtime
+
+    collector = asyncio.create_task(
+        _collect_queue_events(
+            runtime,
+            app_id,
+            lambda event: (
+                event["event"] == "active_turn_changed"
+                and event["data"]["activeTurn"]["active"] is False
+            ),
+        )
+    )
+    await asyncio.sleep(0)
+    generation = asyncio.create_task(
+        app_context.client.post(
+            "/api/app/chat/gen/code",
+            json={"appId": app_id, "message": "跟踪活动回合", "requestId": "active-turn-state"},
+        )
+    )
+    await asyncio.wait_for(model.started.wait(), timeout=3)
+    model.release.set()
+    response = await asyncio.wait_for(generation, timeout=5)
+    assert response.status_code == 200
+
+    events = await collector
+    running = next(
+        event
+        for event in events
+        if event["event"] == "active_turn_changed" and event["data"]["activeTurn"]["active"] is True
+    )
+    finished = next(
+        event
+        for event in events
+        if event["event"] == "active_turn_changed"
+        and event["data"]["activeTurn"]["active"] is False
+    )
+    assert running["data"]["activeTurn"]["status"] == "running"
+    assert running["data"]["activeTurn"]["replayableFromZero"] is True
+    assert finished["data"]["activeTurn"]["turnId"] == "active-turn-state"
+    assert finished["data"]["activeTurn"]["status"] == "completed"
+    assert not any(event["event"] == "user_message_consumed" for event in events)
+    assert (
+        finished["data"]["activeTurn"]["firstEventId"]
+        == finished["data"]["activeTurn"]["lastEventId"]
+    )
+
+
 async def test_followup_pauses_on_interrupt_then_resume_consumes_once(
     app_context: AppContext,
 ) -> None:
@@ -150,8 +203,7 @@ async def test_followup_pauses_on_interrupt_then_resume_consumes_once(
     paused_events = await _collect_queue_events(
         runtime,
         app_id,
-        lambda event: event["event"] == "queue_snapshot"
-        and len(event["data"]["pausedItems"]) == 1,
+        lambda event: event["event"] == "queue_snapshot" and len(event["data"]["pausedItems"]) == 1,
     )
     assert paused_events[0]["data"]["pausedItems"][0]["commandId"] == "queued-1"
     await asyncio.sleep(0.05)
@@ -167,14 +219,14 @@ async def test_followup_pauses_on_interrupt_then_resume_consumes_once(
     consumed_events = await _collect_queue_events(
         runtime,
         app_id,
-        lambda event: event["event"] == "user_message_consumed"
-        and event["data"]["commandId"] == "queued-1",
+        lambda event: (
+            event["event"] == "user_message_consumed" and event["data"]["commandId"] == "queued-1"
+        ),
     )
     consumed = next(
         event
         for event in consumed_events
-        if event["event"] == "user_message_consumed"
-        and event["data"]["commandId"] == "queued-1"
+        if event["event"] == "user_message_consumed" and event["data"]["commandId"] == "queued-1"
     )
     assert consumed["data"]["mode"] == "followup"
     assert consumed["data"]["text"] == "排队内容"
@@ -235,15 +287,15 @@ async def test_steer_queued_item_consumes_once_in_current_turn(app_context: AppC
     steering_event = next(
         event for event in events if event["event"] == EventType.STEERING_CONSUMED
     )
-    assert steering_event["data"]["items"] == [
-        {"commandId": "queued-steer-1", "text": "插话内容"}
-    ]
+    assert steering_event["data"]["items"] == [{"commandId": "queued-steer-1", "text": "插话内容"}]
 
     queue_events = await _collect_queue_events(
         runtime,
         app_id,
-        lambda event: event["event"] == "user_message_consumed"
-        and event["data"]["commandId"] == "queued-steer-1",
+        lambda event: (
+            event["event"] == "user_message_consumed"
+            and event["data"]["commandId"] == "queued-steer-1"
+        ),
     )
     consumed = next(
         event

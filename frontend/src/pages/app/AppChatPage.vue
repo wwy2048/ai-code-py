@@ -390,6 +390,7 @@ import {
   sendQueueControl,
   sendTurnControl,
   streamGeneration,
+  type ActiveTurnSnapshot,
   type QueuedItem,
   type QueueSnapshot,
   type StreamEvent,
@@ -476,6 +477,9 @@ const queueConflictVisible = ref(false)
 const pendingQueueMessage = ref('')
 const consumedCommandIds = new Set<string>()
 const queueVersion = ref(0)
+const activeTurnSnapshot = ref<ActiveTurnSnapshot | null>(null)
+const resumingTurnId = ref<string>()
+const streamGapTurnIds = new Set<string>()
 let queueEventSource: EventSource | null = null
 const messagesContainer = ref<HTMLElement>()
 const historyReady = ref(false)
@@ -766,13 +770,14 @@ const fetchAppInfo = async () => {
 
       // 获取对话历史
       await fetchChatHistory()
+      await maybeResumeActiveTurn()
 
       // 检查是否有对话历史
       const hasHistory = chatHistory.value.length > 0
 
       // 更新预览URL
       if (hasHistory) {
-        updatePreview()
+        await updatePreviewIfAvailable()
       }
 
       // 自动发送初始提示词（如果是自己的app，并且没有对话历史）
@@ -902,10 +907,82 @@ const resolveQueueConflict = async (clearPaused: boolean) => {
   if (sent) exitEditing()
 }
 
+const applyActiveTurn = (snapshot: ActiveTurnSnapshot | null) => {
+  activeTurnSnapshot.value = snapshot
+  if (!snapshot) return
+
+  if (snapshot.active && snapshot.status === 'running') {
+    void maybeResumeActiveTurn()
+    return
+  }
+
+  if (activeTurnId.value === snapshot.turnId) {
+    isGenerating.value = false
+    activeTurnId.value = undefined
+  }
+  streamGapTurnIds.delete(snapshot.turnId)
+  if (snapshot.status === 'completed') {
+    void updatePreviewIfAvailable()
+  }
+}
+
+const maybeResumeActiveTurn = async () => {
+  const snapshot = activeTurnSnapshot.value
+  if (!snapshot?.active || snapshot.status !== 'running' || !historyReady.value || !appId.value) {
+    return
+  }
+  if (!snapshot.replayableFromZero) {
+    message.warning('本轮事件过多，无法从头重放，已切换到历史快照')
+    return
+  }
+  if (
+    streamGapTurnIds.has(snapshot.turnId) ||
+    resumingTurnId.value === snapshot.turnId
+  ) {
+    return
+  }
+
+  const userIndex = messages.value.findIndex(
+    item => item.type === 'user' && item.turnId === snapshot.turnId,
+  )
+  if (userIndex < 0) return
+  const userMessage = messages.value[userIndex]
+  let aiIndex = messages.value.findIndex(
+    item => item.type === 'ai' && item.turnId === snapshot.turnId,
+  )
+  if (aiIndex < 0) {
+    aiIndex = userIndex + 1
+    messages.value.splice(aiIndex, 0, {
+      type: 'ai',
+      content: '',
+      blocks: [],
+      loading: true,
+      turnId: snapshot.turnId,
+    })
+  } else {
+    messages.value[aiIndex] = {
+      ...messages.value[aiIndex],
+      content: '',
+      blocks: [],
+      loading: true,
+      turnId: snapshot.turnId,
+    }
+  }
+
+  resumingTurnId.value = snapshot.turnId
+  isGenerating.value = true
+  activeTurnId.value = snapshot.turnId
+  await nextTick()
+  scrollToBottom()
+  void generateCode(userMessage.content, aiIndex, snapshot.turnId).finally(() => {
+    if (resumingTurnId.value === snapshot.turnId) resumingTurnId.value = undefined
+  })
+}
 const applyQueueSnapshot = (snapshot: QueueSnapshot) => {
   const version = Number(snapshot.version || 0)
   if (version < queueVersion.value) return
   queueVersion.value = version
+  applyActiveTurn(snapshot.activeTurn ?? null)
   queuedItems.value = snapshot.queuedItems || []
   pausedItems.value = snapshot.pausedItems || []
 }
@@ -963,6 +1040,7 @@ const connectQueueEvents = () => {
       onSnapshot: applyQueueSnapshot,
       onChanged: applyQueueSnapshot,
       onConsumed: handleUserMessageConsumed,
+      onActiveTurnChanged: applyActiveTurn,
       onError: () => {
         console.warn('生成队列事件流连接中断，浏览器将自动重连')
       },
@@ -1248,10 +1326,15 @@ const generateCode = async (
         flushTypewriter(false)
         appendControlNote('> 本轮已中断。')
         break
-      case 'stream_gap':
-        message.warning('事件流出现缺口，正在重新同步历史...')
-        setTimeout(() => window.location.reload(), 500)
+      case 'stream_gap': {
+        const gapTurnId = String(data.turnId || requestId)
+        streamGapTurnIds.add(gapTurnId)
+        isGenerating.value = false
+        if (activeTurnId.value === gapTurnId) activeTurnId.value = undefined
+        message.warning('本轮实时事件过多，已切换到历史快照')
+        void fetchChatHistory()
         break
+      }
 
       case 'turn_finished': {
         flushTypewriter(true)
@@ -1369,6 +1452,26 @@ const updatePreview = () => {
   }
 }
 
+const updatePreviewIfAvailable = async () => {
+  if (!appId.value) return
+  const codeGenType = appInfo.value?.codeGenType || CodeGenTypeEnum.HTML
+  const candidate = getStaticPreviewUrl(codeGenType, appId.value)
+  try {
+    const response = await fetch(candidate, {
+      method: 'HEAD',
+      credentials: 'include',
+      cache: 'no-store',
+    })
+    if (response.ok) {
+      updatePreview()
+      return
+    }
+  } catch (error) {
+    console.warn('检查预览产物失败：', error)
+  }
+  previewUrl.value = ''
+  previewReady.value = false
+}
 const refreshPreview = () => {
   if (!previewUrl.value || refreshingPreview.value || isGenerating.value) return
   refreshingPreview.value = true

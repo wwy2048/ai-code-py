@@ -35,6 +35,13 @@ class QueueProjection:
     def apply_mutation(self) -> QueueEvent:
         return self._publish("queue_changed", self._snapshot_provider())
 
+    def publish_active_turn(self, active_turn: dict[str, Any] | None) -> QueueEvent:
+        return self._publish("active_turn_changed", {"activeTurn": active_turn})
+
+    @property
+    def has_inflight(self) -> bool:
+        return bool(self._inflight)
+
     async def on_event(self, event: EventEnvelope) -> None:
         if event.app_id != self.app_id:
             return

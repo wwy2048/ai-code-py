@@ -201,6 +201,49 @@ async def test_same_request_id_does_not_create_duplicate_turn_and_can_resume(
     assert user_messages == 1
 
 
+async def test_expired_turn_receipt_uses_database_idempotency(
+    app_context: AppContext,
+) -> None:
+    _, app_id = await _register_login_and_create_app(app_context)
+    model = TwoBatchModel()
+    app_context.app.state.generation_runtime = GenerationRuntime(
+        AgentTurnExecutor(
+            app_context.session_factory,
+            Path(app_context.app.state.settings.workspace_root),
+            lambda _: model,
+        ),
+        finished_turn_ttl_seconds=0,
+        turn_receipt_limit=1,
+        agent_idle_ttl_seconds=3600,
+    )
+    payload = {
+        "appId": app_id,
+        "message": "数据库幂等测试",
+        "requestId": "turn-db-idempotent",
+    }
+
+    first = await app_context.client.post("/api/app/chat/gen/code", json=payload)
+    first_events = _parse_sse(first.text)
+    assert first_events[-1]["event"] == "turn_finished"
+    calls_after_first = model.calls
+
+    second = await app_context.client.post("/api/app/chat/gen/code", json=payload)
+    second_events = _parse_sse(second.text)
+
+    assert model.calls == calls_after_first
+    assert second_events == [
+        {
+            "id": 0,
+            "event": "turn_finished",
+            "data": {
+                "turnId": "turn-db-idempotent",
+                "sequence": 0,
+                "status": "completed",
+            },
+        }
+    ]
+
+
 async def test_same_request_id_with_different_message_is_rejected(
     app_context: AppContext,
 ) -> None:

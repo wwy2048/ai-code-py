@@ -154,11 +154,21 @@ export interface QueuedItem {
   status: 'queued' | 'paused'
 }
 
+export interface ActiveTurnSnapshot {
+  turnId: string
+  active: boolean
+  status: 'running' | 'completed' | 'failed' | 'interrupted'
+  firstEventId: number
+  lastEventId: number
+  replayableFromZero: boolean
+}
+
 export interface QueueSnapshot {
   appId: number
   version: number
   paused: boolean
   activeTurnId?: string | null
+  activeTurn?: ActiveTurnSnapshot | null
   queuedItems: QueuedItem[]
   pausedItems: QueuedItem[]
 }
@@ -206,6 +216,7 @@ interface QueueStreamHandlers {
   onSnapshot: (snapshot: QueueSnapshot) => void
   onChanged: (snapshot: QueueSnapshot) => void
   onConsumed: (event: UserMessageConsumedEvent) => void
+  onActiveTurnChanged?: (activeTurn: ActiveTurnSnapshot | null) => void
   onError?: () => void
 }
 
@@ -240,6 +251,10 @@ export const connectGenerationQueue = ({
   })
   source.addEventListener('user_message_consumed', (event) => {
     handlers.onConsumed(parse<UserMessageConsumedEvent>(event as MessageEvent<string>))
+  })
+  source.addEventListener('active_turn_changed', (event) => {
+    const payload = parse<{ activeTurn?: ActiveTurnSnapshot | null }>(event as MessageEvent<string>)
+    handlers.onActiveTurnChanged?.(payload.activeTurn ?? null)
   })
   source.onerror = () => {
     handlers.onError?.()

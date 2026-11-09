@@ -4,6 +4,7 @@ import asyncio
 import json
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
+from time import monotonic
 from typing import Any
 
 from app.generation.application.control import TurnControl
@@ -39,14 +40,17 @@ class TurnJob:
     condition: asyncio.Condition = field(default_factory=asyncio.Condition)
     completed: bool = False
     outcome: str | None = None
+    finished_at: float | None = None
     next_sequence: int = 1
-    max_events: int = 4096
+    max_events: int = 16384
     control: TurnControl = field(default_factory=TurnControl)
     command_id: str | None = None
     queued: bool = False
     _changed: asyncio.Event = field(default_factory=asyncio.Event)
     _first_retained_id: int = 1
     _subscription: object | None = None
+    _active_readers: int = 0
+    _compact_when_idle: bool = False
 
     def reserve_sequence(self) -> int:
         sequence = self.next_sequence
@@ -76,11 +80,59 @@ class TurnJob:
     async def finish(self, outcome: str) -> None:
         self.outcome = outcome
         self.completed = True
+        self.finished_at = monotonic()
         self._changed.set()
         async with self.condition:
             self.condition.notify_all()
 
+    @property
+    def first_retained_id(self) -> int:
+        return self._first_retained_id
+
+    @property
+    def last_event_id(self) -> int:
+        return self.next_sequence - 1
+
+    @property
+    def replayable_from_zero(self) -> bool:
+        return self._first_retained_id <= 1
+
+    def resume_snapshot(self, *, status: str, active: bool) -> dict[str, Any]:
+        first_event_id = self.last_event_id if self.completed else self.first_retained_id
+        return {
+            "turnId": self.request_id,
+            "active": active,
+            "status": status,
+            "firstEventId": first_event_id,
+            "lastEventId": self.last_event_id,
+            "replayableFromZero": not self.completed and self.replayable_from_zero,
+        }
+
+    def retain_final_event_only(self) -> None:
+        self._compact_when_idle = True
+        if self._active_readers == 0:
+            self._compact_events()
+
+    def _compact_events(self) -> None:
+        final_event = next(
+            (event for event in reversed(self.events) if event.event == "turn_finished"),
+            None,
+        )
+        self.events = [final_event] if final_event is not None else []
+        if final_event is not None:
+            self._first_retained_id = final_event.id
+
     async def stream(self, last_event_id: int | None) -> AsyncIterator[TurnEvent]:
+        self._active_readers += 1
+        try:
+            async for event in self._stream_events(last_event_id):
+                yield event
+        finally:
+            self._active_readers = max(0, self._active_readers - 1)
+            if self._active_readers == 0 and self._compact_when_idle:
+                self._compact_events()
+
+    async def _stream_events(self, last_event_id: int | None) -> AsyncIterator[TurnEvent]:
         cursor = last_event_id or 0
         last_sequence = self.next_sequence - 1
         if self.completed and cursor >= last_sequence:
@@ -166,9 +218,7 @@ async def coalesce_stream_events(
                     chars = len(str(event.data.get("text", "")))
                 elif event.data.get("batchId") == merged.data.get("batchId"):
                     chars += len(str(event.data.get("text", "")))
-                    combined = str(merged.data.get("text", "")) + str(
-                        event.data.get("text", "")
-                    )
+                    combined = str(merged.data.get("text", "")) + str(event.data.get("text", ""))
                     merged = merge(event, combined)
                 else:
                     yield merged
