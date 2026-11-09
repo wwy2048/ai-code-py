@@ -60,6 +60,9 @@ class Settings(BaseSettings):
     deploy_url_base: str = "http://localhost:8123/api/deploy"
     cover_screenshot_url_base: str | None = None
     screenshots_root: str = str(_PROJECT_ROOT / "tmp/screenshots")
+    selenium_offline: bool = True
+    chromedriver_path: str | None = None
+    chrome_binary_path: str | None = None
     screenshot_timeout_seconds: int = 30
     screenshot_wait_after_load_seconds: float = 1.0
     cover_shutdown_timeout_seconds: float = 10.0

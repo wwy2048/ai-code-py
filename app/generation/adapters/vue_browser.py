@@ -10,6 +10,8 @@ from selenium.common.exceptions import TimeoutException, WebDriverException
 from selenium.webdriver import Chrome, ChromeOptions
 from selenium.webdriver.support.ui import WebDriverWait
 
+from app.selenium_support import apply_chrome_binary, build_chrome_service
+
 logger = logging.getLogger(__name__)
 
 
@@ -33,12 +35,16 @@ class SeleniumVueBrowserValidator:
         timeout_seconds: float = 30.0,
         wait_after_load_seconds: float = 1.0,
         min_css_bytes: int = 200,
+        chromedriver_path: str | None = None,
+        chrome_binary_path: str | None = None,
     ) -> None:
         if timeout_seconds <= 0 or wait_after_load_seconds < 0 or min_css_bytes < 0:
             raise ValueError("浏览器校验参数不合法")
         self._timeout_seconds = timeout_seconds
         self._wait_after_load_seconds = wait_after_load_seconds
         self._min_css_bytes = min_css_bytes
+        self._chromedriver_path = chromedriver_path
+        self._chrome_binary_path = chrome_binary_path
 
     def validate(self, dist_root: Path) -> BrowserValidationResult:
         index = dist_root / "index.html"
@@ -71,8 +77,10 @@ class SeleniumVueBrowserValidator:
             options.add_argument("--mute-audio")
             options.add_argument("--window-size=1440,900")
             options.set_capability("goog:loggingPrefs", {"browser": "ALL"})
+            apply_chrome_binary(options, self._chrome_binary_path)
+            service = build_chrome_service(self._chromedriver_path)
 
-            driver = Chrome(options=options)
+            driver = Chrome(service=service, options=options)
             driver.set_page_load_timeout(self._timeout_seconds)
             port = server.server_address[1]
             page_url = f"http://127.0.0.1:{port}/index.html"

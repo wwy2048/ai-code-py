@@ -37,6 +37,7 @@ from app.generation.adapters.vue_project import VueProjectBuilder
 from app.generation.application.runtime import GenerationRuntime
 from app.generation.ports.model import AgentModel
 from app.logging_config import configure_logging
+from app.selenium_support import configure_selenium
 from app.services.deployments import generate_deploy_key
 
 
@@ -51,6 +52,7 @@ def create_app(
 ) -> FastAPI:
     app_settings = settings or get_settings()
     configure_logging(app_settings.log_level)
+    configure_selenium(app_settings)
     app_engine = engine or create_engine(app_settings.database_url)
     app_redis = redis_client or Redis.from_url(app_settings.redis_url, decode_responses=True)
 
@@ -103,6 +105,8 @@ def create_app(
             timeout_seconds=app_settings.vue_browser_validation_timeout_seconds,
             wait_after_load_seconds=app_settings.vue_browser_validation_wait_seconds,
             min_css_bytes=app_settings.vue_browser_validation_min_css_bytes,
+            chromedriver_path=app_settings.chromedriver_path,
+            chrome_binary_path=app_settings.chrome_binary_path,
         )
         if app_settings.vue_browser_validation_enabled
         else None

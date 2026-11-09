@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.config import Settings
 from app.models import App
+from app.selenium_support import apply_chrome_binary, build_chrome_service
 
 logger = logging.getLogger(__name__)
 
@@ -44,6 +45,8 @@ class SeleniumScreenshotCapturer:
     def __init__(self, settings: Settings) -> None:
         self._timeout_seconds = settings.screenshot_timeout_seconds
         self._wait_after_load_seconds = settings.screenshot_wait_after_load_seconds
+        self._chromedriver_path = settings.chromedriver_path
+        self._chrome_binary_path = settings.chrome_binary_path
 
     def capture(self, url: str, output_path: Path) -> None:
         driver = None
@@ -59,7 +62,9 @@ class SeleniumScreenshotCapturer:
             options.add_argument("--disable-dev-shm-usage")
             options.add_argument("--disable-extensions")
             options.add_argument("--window-size=1600,900")
-            driver = Chrome(options=options)
+            apply_chrome_binary(options, self._chrome_binary_path)
+            service = build_chrome_service(self._chromedriver_path)
+            driver = Chrome(service=service, options=options)
             driver.set_page_load_timeout(self._timeout_seconds)
             driver.get(url)
             WebDriverWait(driver, self._timeout_seconds).until(
@@ -86,6 +91,8 @@ class SeleniumScreenshotCapturer:
             raise ScreenshotCaptureError("page_timeout") from exc
         except ScreenshotCaptureError:
             raise
+        except FileNotFoundError as exc:
+            raise ScreenshotCaptureError(f"chrome_not_found: {exc}") from exc
         except Exception as exc:
             raise ScreenshotCaptureError("browser_failure") from exc
         finally:
